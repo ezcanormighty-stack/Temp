@@ -1,1 +1,75 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/ORCLCDB}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
 
+npci:
+  outward:
+    paths:
+      source: ${SOURCE_PATH:/app/data/source}
+      working: ${WORKING_PATH:/app/data/processing}
+      destination: ${DEST_PATH:/app/data/encrypted}
+      backup: ${BACKUP_PATH:/app/data/backup}
+      error: ${ERROR_PATH:/app/data/error}
+    batch:
+      xml-count: 100
+      image-count: 200
+      poll-interval-ms: 10000
+    security:
+      public-key-path: ${PUB_KEY_PATH:/app/keys/public.asc}
+      private-key-path: ${PRIV_KEY_PATH:/app/keys/private.p12}
+      private-key-password: ${KEY_PASSWORD}
+      cert-path: ${CERT_PATH:/app/keys/cert.cer}
+    sftp:
+      host: ${SFTP_HOST:sftp.example.com}
+      port: ${SFTP_PORT:22}
+      username: ${SFTP_USER}
+      private-key-path: ${SFTP_KEY:/app/keys/sftp_rsa}
+      remote-dir: ${SFTP_DIR:/upload/outward}
+
+
+
+
+package com.tcs.sbi.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "npci.outward")
+public record NpciOutwardProperties(
+    Paths paths,
+    Batch batch,
+    Security security,
+    Sftp sftp
+) {
+    public record Paths(String source, String working, String destination, String backup, String error) {}
+    public record Batch(int xmlCount, int imageCount, long pollIntervalMs) {}
+    public record Security(String publicKeyPath, String privateKeyPath, String privateKeyPassword, String certPath) {}
+    public record Sftp(String host, int port, String username, String privateKeyPath, String remoteDir) {}
+}
+
+
+package com.tcs.sbi.config;
+
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.springframework.context.annotation.Configuration;
+import jakarta.annotation.PostConstruct;
+import java.security.Security;
+
+@Configuration
+public class PgpEncryptionConfig {
+
+    @PostConstruct
+    public void initializeBouncyCastle() {
+        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+            Security.addProvider(new BouncyCastleProvider());
+        }
+    }
+}
