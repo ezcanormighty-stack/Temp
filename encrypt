@@ -1,0 +1,2469 @@
+package com.tcs.sbi.launcher;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Security;
+import java.security.cert.X509Certificate;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPException;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter;
+
+import com.tcs.sbi.constants.ErrorConstants;
+import com.tcs.sbi.constants.MandateConstants;
+import com.tcs.sbi.dbConnection.Manager;
+import com.tcs.sbi.main.MandateMain;
+import com.tcs.sbi.util.MandateEncProperties;
+import com.tcs.sbi.util.MandateUtility;
+
+@SuppressWarnings("deprecation")
+public class MandateLauncher {
+	private static final Logger log = LogManager.getLogger(MandateLauncher.class);
+	private static String loggerPath;
+	private static String srcPath;
+	private static String destPath;
+	private static String zippedPath;
+	private static String signedPath;
+	private static String encryptedPath;
+	private static String failedFilesPath;
+	private static String backUpPath;
+	public static String password;
+	public static PrivateKey privateKey;
+	public static PublicKey publicKey;
+	public static PGPPublicKey pgpPublicKey;
+	private static String threadSleepTimeString;
+	private static int threadSleepTime;
+	private static String publicKeyPath;
+	private static String privateKeyPath;
+	private static String tailName;
+	private static String zippingFailedPath;
+	private static String signingFailedPath;
+	private static String encryptingFailedPath;
+	private static String fileProcessLimitString;
+	private static int fileProcessLimit;
+	private static String toProcessPath;
+	private static String nameStart;
+	private static String nameEnd;
+	private static String minFileNameLengthString;
+	private static String maxFileNameLengthString;
+	private static int minFileNameLength;
+	private static int maxFileNameLength;
+	private static String noOfDays;
+	private static String sbiSrNo;
+	private static String Key, IV;
+	private static String dbUser, dbPwd, dbUrl;
+	private static String pubKey;
+	private static X509Certificate privCert;
+	private static X509Certificate pubCert;
+	private static String Encodedpubcert;
+
+	private static String sftpHost;
+	private static String sftpUsername;
+	private static String sftpPwd;
+	private static String sftpPort;
+	private static String serverPrivateKeypath;
+	private static String orgnDestCreatePath;
+	private static String orgnDestCancelPath;
+	private static String orgnDestAmendPath;
+	private static String createDestPath;
+	private static String cancelDestPath;
+	private static String amendDestPath;
+	private static String EODReached;
+	private static String sequencePath;
+
+	public static String getEODReached() {
+		return EODReached;
+	}
+
+	public static void setEODReached(String eODReached) {
+		EODReached = eODReached;
+	}
+
+	public static String getOrgnDestCreatePath() {
+		return orgnDestCreatePath;
+	}
+
+	public static void setOrgnDestCreatePath(String orgnDestCreatePath) {
+		MandateLauncher.orgnDestCreatePath = orgnDestCreatePath;
+	}
+
+	public static String getOrgnDestCancelPath() {
+		return orgnDestCancelPath;
+	}
+
+	public static void setOrgnDestCancelPath(String orgnDestCancelPath) {
+		MandateLauncher.orgnDestCancelPath = orgnDestCancelPath;
+	}
+
+	public static String getOrgnDestAmendPath() {
+		return orgnDestAmendPath;
+	}
+
+	public static void setOrgnDestAmendPath(String orgnDestAmendPath) {
+		MandateLauncher.orgnDestAmendPath = orgnDestAmendPath;
+	}
+
+	public static String getPubKey() {
+		return pubKey;
+	}
+
+	public static void setPubKey(String pubKey) {
+		MandateLauncher.pubKey = pubKey;
+	}
+
+	public static String getCreateDestPath() {
+		return createDestPath;
+	}
+
+	public static void setCreateDestPath(String createDestPath) {
+		MandateLauncher.createDestPath = createDestPath;
+	}
+
+	public static String getCancelDestPath() {
+		return cancelDestPath;
+	}
+
+	public static void setCancelDestPath(String cancelDestPath) {
+		MandateLauncher.cancelDestPath = cancelDestPath;
+	}
+
+	public static String getAmendDestPath() {
+		return amendDestPath;
+	}
+
+	public static void setAmendDestPath(String amendDestPath) {
+		MandateLauncher.amendDestPath = amendDestPath;
+	}
+
+	public static X509Certificate getPrivCert() {
+		return privCert;
+	}
+
+	public static void setPrivCert(X509Certificate privCert) {
+		MandateLauncher.privCert = privCert;
+	}
+
+	public static X509Certificate getPubCert() {
+		return pubCert;
+	}
+
+	public static void setPubCert(X509Certificate pubCert) {
+		MandateLauncher.pubCert = pubCert;
+	}
+
+	public static String getEncodedpubcert() {
+		return Encodedpubcert;
+	}
+
+	public static void setEncodedpubcert(String encodedpubcert) {
+		Encodedpubcert = encodedpubcert;
+	}
+
+	public static String getServerPrivateKeypath() {
+		return serverPrivateKeypath;
+	}
+
+	public static void setServerPrivateKeypath(String serverPrivateKeypath) {
+		MandateLauncher.serverPrivateKeypath = serverPrivateKeypath;
+	}
+
+	public static String getSftpHost() {
+		return sftpHost;
+	}
+
+	public static void setSftpHost(String sftpHost) {
+		MandateLauncher.sftpHost = sftpHost;
+	}
+
+	public static String getSftpUsername() {
+		return sftpUsername;
+	}
+
+	public static void setSftpUsername(String sftpUsername) {
+		MandateLauncher.sftpUsername = sftpUsername;
+	}
+
+	public static String getSftpPwd() {
+		return sftpPwd;
+	}
+
+	public static void setSftpPwd(String sftpPwd) {
+		MandateLauncher.sftpPwd = sftpPwd;
+	}
+
+	public static String getSftpPort() {
+		return sftpPort;
+	}
+
+	public static void setSftpPort(String sftpPort) {
+		MandateLauncher.sftpPort = sftpPort;
+	}
+
+//	public static String getFileZone() {
+//		return fileZone;
+//	}
+//
+//	public static void setFileZone(String fileZone) {
+//		MandateLauncher.fileZone = fileZone;
+//	}
+
+	public static String getSequencePath() {
+		return sequencePath;
+	}
+
+	public static void setSequencePath(String sequencePath) {
+		MandateLauncher.sequencePath = sequencePath;
+	}
+
+	public static String getPassword() {
+		return password;
+	}
+
+	public static void setPassword(String password) {
+		MandateLauncher.password = password;
+	}
+
+	public static String getSbiSrNo() {
+		return sbiSrNo;
+	}
+
+	public static void setSbiSrNo(String sbiSrNo) {
+		MandateLauncher.sbiSrNo = sbiSrNo;
+	}
+
+	public static String getNoOfDays() {
+		return noOfDays;
+	}
+
+	public static void setNoOfDays(String noOfDays) {
+		MandateLauncher.noOfDays = noOfDays;
+	}
+
+	public static String getNameStart() {
+		return nameStart;
+	}
+
+	public static void setNameStart(String nameStart) {
+		MandateLauncher.nameStart = nameStart;
+	}
+
+	public static String getNameEnd() {
+		return nameEnd;
+	}
+
+	public static void setNameEnd(String nameEnd) {
+		MandateLauncher.nameEnd = nameEnd;
+	}
+
+	public static String getToProcessPath() {
+		return toProcessPath;
+	}
+
+	public static void setToProcessPath(String toProcessPath) {
+		MandateLauncher.toProcessPath = toProcessPath;
+	}
+
+	public static int getFileProcesslimit() {
+		return fileProcessLimit;
+	}
+
+	public static void setFileProcesslimit(int fileProcessLimit) {
+		MandateLauncher.fileProcessLimit = fileProcessLimit;
+	}
+
+	public static String getEncryptingFailedPath() {
+		return encryptingFailedPath;
+	}
+
+	public static void setEncryptingFailedPath(String encryptingFailedPath) {
+		MandateLauncher.encryptingFailedPath = encryptingFailedPath;
+	}
+
+	public static String getSigningFailedPath() {
+		return signingFailedPath;
+	}
+
+	public static void setSigningFailedPath(String signingFailedPath) {
+		MandateLauncher.signingFailedPath = signingFailedPath;
+	}
+
+	public static String getZippingFailedPath() {
+		return zippingFailedPath;
+	}
+
+	public static void setZippingFailedPath(String zippingFailedPath) {
+		MandateLauncher.zippingFailedPath = zippingFailedPath;
+	}
+
+	public static String getTailName() {
+		return tailName;
+	}
+
+	public static void setTailName(String tailName) {
+		MandateLauncher.tailName = tailName;
+	}
+
+	public static String getPublicKeyPath() {
+		return publicKeyPath;
+	}
+
+	public static void setPublicKeyPath(String publicKeyPath) {
+		MandateLauncher.publicKeyPath = publicKeyPath;
+	}
+
+	public static String getPrivateKeyPath() {
+		return privateKeyPath;
+	}
+
+	public static void setPrivateKeyPath(String privateKeyPath) {
+		MandateLauncher.privateKeyPath = privateKeyPath;
+	}
+
+	public static String getLoggerPath() {
+		return loggerPath;
+	}
+
+	public static String getBackUpPath() {
+		return backUpPath;
+	}
+
+	public static void setBackUpPath(String backUpPath) {
+		MandateLauncher.backUpPath = backUpPath;
+	}
+
+	public static void setLoggerPath(String loggerPath) {
+		MandateLauncher.loggerPath = loggerPath;
+	}
+
+	public static String getSrcPath() {
+		return srcPath;
+	}
+
+	public static void setSrcPath(String srcPath) {
+		MandateLauncher.srcPath = srcPath;
+	}
+
+	public static String getDestPath() {
+		return destPath;
+	}
+
+	public static void setDestPath(String destPath) {
+		MandateLauncher.destPath = destPath;
+	}
+
+	public static String getZippedPath() {
+		return zippedPath;
+	}
+
+	public static void setZippedPath(String zippedPath) {
+		MandateLauncher.zippedPath = zippedPath;
+	}
+
+	public static String getSignedPath() {
+		return signedPath;
+	}
+
+	public static void setSignedPath(String signedPath) {
+		MandateLauncher.signedPath = signedPath;
+	}
+
+	public static PrivateKey getPrivateKey() {
+		return privateKey;
+	}
+
+	public static void setPrivateKey(PrivateKey privateKey) {
+		MandateLauncher.privateKey = privateKey;
+	}
+
+	public static PublicKey getPublicKey() {
+		return publicKey;
+	}
+
+	public static void setPublicKey(PublicKey publicKey) {
+		MandateLauncher.publicKey = publicKey;
+	}
+
+	public static PGPPublicKey getPgpPublicKey() {
+		return pgpPublicKey;
+	}
+
+	public static void setPgpPublicKey(PGPPublicKey pgpPublicKey) {
+		MandateLauncher.pgpPublicKey = pgpPublicKey;
+	}
+
+	public static String getFailedFilesPath() {
+		return failedFilesPath;
+	}
+
+	public static void setFailedFilesPath(String failedFilesPath) {
+		MandateLauncher.failedFilesPath = failedFilesPath;
+	}
+
+	public static String getEncryptedPath() {
+		return encryptedPath;
+	}
+
+	public static void setEncryptedPath(String encryptedPath) {
+		MandateLauncher.encryptedPath = encryptedPath;
+	}
+
+	public static String getThreadSleepTimeString() {
+		return threadSleepTimeString;
+	}
+
+	public static void setThreadSleepTimeString(String threadSleepTimeString) {
+		MandateLauncher.threadSleepTimeString = threadSleepTimeString;
+	}
+
+	public static int getThreadSleepTime() {
+		return threadSleepTime;
+	}
+
+	public static void setThreadSleepTime(int threadSleepTime) {
+		MandateLauncher.threadSleepTime = threadSleepTime;
+	}
+
+	public static String getFileProcessLimitString() {
+		return fileProcessLimitString;
+	}
+
+	public static void setFileProcessLimitString(String fileProcessLimitString) {
+		MandateLauncher.fileProcessLimitString = fileProcessLimitString;
+	}
+
+	public static int getFileProcessLimit() {
+		return fileProcessLimit;
+	}
+
+	public static void setFileProcessLimit(int fileProcessLimit) {
+		MandateLauncher.fileProcessLimit = fileProcessLimit;
+	}
+
+	public static String getMinFileNameLengthString() {
+		return minFileNameLengthString;
+	}
+
+	public static void setMinFileNameLengthString(String minFileNameLengthString) {
+		MandateLauncher.minFileNameLengthString = minFileNameLengthString;
+	}
+
+	public static String getMaxFileNameLengthString() {
+		return maxFileNameLengthString;
+	}
+
+	public static void setMaxFileNameLengthString(String maxFileNameLengthString) {
+		MandateLauncher.maxFileNameLengthString = maxFileNameLengthString;
+	}
+
+	public static int getMinFileNameLength() {
+		return minFileNameLength;
+	}
+
+	public static void setMinFileNameLength(int minFileNameLength) {
+		MandateLauncher.minFileNameLength = minFileNameLength;
+	}
+
+	public static int getMaxFileNameLength() {
+		return maxFileNameLength;
+	}
+
+	public static void setMaxFileNameLength(int maxFileNameLength) {
+		MandateLauncher.maxFileNameLength = maxFileNameLength;
+	}
+
+	public static String getKey() {
+		return Key;
+	}
+
+	public static void setKey(String key) {
+		Key = key;
+	}
+
+	public static String getIV() {
+		return IV;
+	}
+
+	public static void setIV(String iV) {
+		IV = iV;
+	}
+
+	public static String getDbUser() {
+		return dbUser;
+	}
+
+	public static void setDbUser(String dbUser) {
+		MandateLauncher.dbUser = dbUser;
+	}
+
+	public static String getDbPwd() {
+		return dbPwd;
+	}
+
+	public static void setDbPwd(String dbPwd) {
+		MandateLauncher.dbPwd = dbPwd;
+	}
+
+	public static String getDbUrl() {
+		return dbUrl;
+	}
+
+	public static void setDbUrl(String dbUrl) {
+		MandateLauncher.dbUrl = dbUrl;
+	}
+
+	public static Logger getLog() {
+		return log;
+	}
+
+	static {
+		try {
+			loggerPath = MandateEncProperties.getInstance().getProperty(MandateConstants.LOGGER_FILEPATH.toString());
+			Configurator.initialize(null, loggerPath + MandateConstants.LOGGER_FILENAME.toString() + ".properties");
+			srcPath = MandateEncProperties.getInstance().getProperty("SOURCE_PATH");
+			destPath = MandateEncProperties.getInstance().getProperty("DESTINATION_PATH");
+			zippedPath = MandateEncProperties.getInstance().getProperty("ZIPPED_PATH");
+			signedPath = MandateEncProperties.getInstance().getProperty("SIGNED_PATH");
+			failedFilesPath = MandateEncProperties.getInstance().getProperty("FAILED_FILES_PATH");
+			backUpPath = MandateEncProperties.getInstance().getProperty("BACKUP_PATH");
+			zippingFailedPath = MandateEncProperties.getInstance().getProperty("ZIPPING_FAILED_PATH");
+			signingFailedPath = MandateEncProperties.getInstance().getProperty("SIGNING_FAILED_PATH");
+			encryptingFailedPath = MandateEncProperties.getInstance().getProperty("ENCRYPTING_FAILED_PATH");
+			threadSleepTimeString = MandateEncProperties.getInstance().getProperty("THREAD_SLEEP_TIME");
+			fileProcessLimitString = MandateEncProperties.getInstance().getProperty("FILE_PROCESS_LIMIT");
+			fileProcessLimit = Integer.parseInt(fileProcessLimitString);
+			publicKeyPath = MandateEncProperties.getInstance().getProperty("PUBLIC_KEY_PATH");
+			privateKeyPath = MandateEncProperties.getInstance().getProperty("PRIVATE_KEY_PATH");
+			pubKey = MandateEncProperties.getInstance().getProperty("PUBLIC_CERT_PATH");
+			toProcessPath = MandateEncProperties.getInstance().getProperty("TO_PROCESS_PATH");
+			nameStart = MandateEncProperties.getInstance().getProperty("NAME_STARTS_WITH");
+			nameEnd = MandateEncProperties.getInstance().getProperty("NAME_ENDS_WITH");
+			minFileNameLengthString = MandateEncProperties.getInstance().getProperty("MIN_FILE_NAME_LENGTH");
+			minFileNameLength = Integer.parseInt(minFileNameLengthString);
+			maxFileNameLengthString = MandateEncProperties.getInstance().getProperty("MAX_FILE_NAME_LENGTH");
+			maxFileNameLength = Integer.parseInt(maxFileNameLengthString);
+			noOfDays = MandateEncProperties.getInstance().getProperty("NO_OF_DAYS");
+			sbiSrNo = MandateEncProperties.getInstance().getProperty("USER_ID");
+			password = MandateEncProperties.getInstance().getProperty("PASSWORD");
+			dbPwd = MandateEncProperties.getInstance().getProperty("dbpwd");
+			dbUrl = MandateEncProperties.getInstance().getProperty("dburl");
+			dbUser = MandateEncProperties.getInstance().getProperty("dbuser");
+			Key = MandateEncProperties.getInstance().getProperty("Key");
+			IV = MandateEncProperties.getInstance().getProperty("IV");
+			sequencePath = MandateEncProperties.getInstance().getProperty("SEQUENCE_PATH");
+
+			sftpHost = MandateEncProperties.getInstance().getProperty("SFTP_HOST");
+			sftpUsername = MandateEncProperties.getInstance().getProperty("SFTP_USERNAME");
+			sftpPort = MandateEncProperties.getInstance().getProperty("SFTP_PORT");
+			sftpPwd = MandateEncProperties.getInstance().getProperty("SFTP_PASSWORD");
+			serverPrivateKeypath = MandateEncProperties.getInstance().getProperty("SERVER_PRIVATE_KEY_PATH");
+			createDestPath = MandateEncProperties.getInstance().getProperty("CREATE_DEST_PATH");
+			cancelDestPath = MandateEncProperties.getInstance().getProperty("CANCEL_DEST_PATH");
+			amendDestPath = MandateEncProperties.getInstance().getProperty("AMEND_DEST_PATH");
+			orgnDestCreatePath = MandateEncProperties.getInstance().getProperty("CREATE_ORGN_DEST_PATH");
+			orgnDestCancelPath = MandateEncProperties.getInstance().getProperty("CANCEL_ORGN_DEST_PATH");
+			orgnDestAmendPath = MandateEncProperties.getInstance().getProperty("AMEND_ORGN_DEST_PATH");
+			EODReached = MandateEncProperties.getInstance().getProperty("EOD_REACHED");
+
+			threadSleepTime = Integer.parseInt(threadSleepTimeString);
+			tailName = MandateEncProperties.getInstance().getProperty("TAIL_NAME");
+			Security.addProvider(new BouncyCastleProvider());
+			privateKey = MandateUtility.getCertKeys(privateKeyPath, password);
+			pubCert = MandateUtility.loadX509Certificate(pubKey);
+			privCert = MandateUtility.x509certget(privateKeyPath, password);
+			Encodedpubcert = MandateUtility.base64Certificate(MandateLauncher.getPubCert());
+			publicKey = MandateUtility.getPubkeyfrompath(publicKeyPath);
+			pgpPublicKey = (new JcaPGPKeyConverter().getPGPPublicKey(PGPPublicKey.RSA_GENERAL, publicKey,
+					new java.util.Date()));
+		} catch (IOException | PGPException ex) {
+			log.error("Error while accessing properties file " + ex);
+		} catch (Exception e) {
+			log.error("Error while fetching data for variables " + e.getMessage());
+		}
+	}
+
+	public static void main(String[] args) {
+
+		while (true) {
+			HashMap<String, Object> encdmap = new HashMap<String, Object>();
+			log.info(
+					"********************************  || AADESH_MANDATE_ENC UTILITY STARTED ||  ***********************************\n");
+
+			try {
+				LocalTime eodReachedTime = LocalTime.parse(EODReached);
+				LocalTime currentTime = LocalTime.now();
+				boolean EOD = !currentTime.isBefore(eodReachedTime);
+
+				boolean dbupdate = false;
+				String Zone = "";
+				Calendar cal = Calendar.getInstance();
+				int dTm = Integer.parseInt(MandateLauncher.getNoOfDays());
+				cal.add(Calendar.DATE, -dTm);
+
+				int prevCalMonth = cal.get(Calendar.MONTH) + 1;
+				int prevCalYear = cal.get(Calendar.YEAR);
+				int prevCalDate = cal.get(Calendar.DATE);
+
+				cal.add(Calendar.DATE, dTm);
+				int currCalMonth = cal.get(Calendar.MONTH) + 1;
+				int currCalYear = cal.get(Calendar.YEAR);
+				int currCalDate = cal.get(Calendar.DATE);
+
+				LocalDate startDate = LocalDate.of(prevCalYear, prevCalMonth, prevCalDate);
+				LocalDate endDate = LocalDate.of(currCalYear, currCalMonth, currCalDate);
+
+				File sourceFolder = new File(srcPath);
+				File[] listOfFolders = sourceFolder.listFiles(File::isDirectory); // create,cancel,amend
+
+				for (File folder : listOfFolders) {
+					String folderName = folder.getName();
+					File[] files = folder.listFiles();
+
+					if (files == null || (!EOD && files.length < fileProcessLimit)) {
+						log.info("Waiting for more files to process the batch");
+						continue;
+					}
+					if (files.length > 0) {
+						log.info("Number of files found in " + folder.getName() + " is : " + files.length
+								+ ", now starting the processing.");
+
+						try {
+							int cnt = 1;
+							List<Path> batchFiles = new ArrayList<>();
+							String toProcessFolderName = null;
+							String currDate = new java.text.SimpleDateFormat("ddMMyyyy").format(new java.util.Date());
+							boolean isPreviouslyProcessed = false;
+							for (File file : files) {
+								String finalName = "";
+								String[] parts = file.getName().split("-");
+								String dateStr = parts[5];
+
+//------------------------------FILE NAME MODIFICATION COMMENTED AS IT IS CHANGED IN THE PAIN 12 CODE------------------------------------------------------------- 
+
+								if (parts.length == 8) { // OTH removed and added SBISrNo after sbin
+									finalName = parts[0] + "-" + parts[1] + "-" + parts[2] + "-" + parts[4] + "-"
+											+ parts[5] + "-" + parts[6] + "-" + parts[7];
+								}
+
+								encdmap.put("FileName", file.getName());
+								if (file.getName().contains("OTH")) {
+									Zone = "OTH";
+									encdmap.put("Zone", "OTH");
+								} else if (file.getName().contains("SOU")) {
+									encdmap.put("Zone", "SOU");
+									Zone = "SOU";
+								} else if (file.getName().contains("NOR")) {
+									encdmap.put("Zone", "NOR");
+									Zone = "NOR";
+								}
+								DateTimeFormatter formatter = DateTimeFormatter.ofPattern("ddMMyyyy");
+								boolean flag = false;
+								try {
+									isPreviouslyProcessed = Manager.isFilepreviouslyProcessed(file.getName(),
+											new Date());
+									if (!isPreviouslyProcessed) {
+//										Creating backup 
+//										Files.copy(Paths.get(file.getAbsolutePath()), Paths.get(srcBackUpPath,folderName,file.getName()) ,StandardCopyOption.REPLACE_EXISTING);
+
+										if (file.getName().length() > minFileNameLength
+												&& file.getName().length() < maxFileNameLength) {
+											LocalDate fileDate = LocalDate.parse(dateStr, formatter);
+											if ((fileDate.isEqual(startDate) || fileDate.isAfter(startDate))
+													&& (fileDate.isEqual(endDate) || fileDate.isBefore(endDate))) {
+												if (file.getName().contains(nameStart)
+														&& file.getName().contains(nameEnd)) {
+													flag = true;
+												} else {
+													encdmap.put("ERROR_CODE", ErrorConstants.ERR01.name());
+													encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+													log.info(
+															"FileName validation failed, Moving to Name validation failed path");
+													Files.move(file.toPath(),
+															Paths.get(failedFilesPath + File.separator
+																	+ "NameValidationFailed" + File.separator
+																	+ folderName + File.separator + file.getName()),
+															StandardCopyOption.REPLACE_EXISTING);
+													dbupdate = Manager.insertintoMandate_file_logs(encdmap, new Date());
+													if (dbupdate == true) {
+														log.info("Status updated in DB for File : " + file.getName());
+													} else {
+														log.info(
+																"Unable to updated in DB for File : " + file.getName());
+													}
+												}
+											} else {
+												encdmap.put("ERROR_CODE", ErrorConstants.ERR03.name());
+												encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+												log.info(
+														"Date validation failed, Moving to date validation failed path ");
+												Files.move(file.toPath(),
+														Paths.get(failedFilesPath + File.separator
+																+ "DateValidationFailed" + File.separator + folderName
+																+ File.separator + file.getName()),
+														StandardCopyOption.REPLACE_EXISTING);
+												dbupdate = Manager.insertintoMandate_file_logs(encdmap, new Date());
+												if (dbupdate == true) {
+													log.info("Status updated in DB for File : " + file.getName());
+												} else {
+													log.info("Unable to updated in DB for File : " + file.getName());
+												}
+											}
+										} else {
+											encdmap.put("ERROR_CODE", ErrorConstants.ERR01.name());
+											encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+
+//											log.infoln("File Name length validation failed");
+											log.info(
+													"File name length validation failed, Moving to name length validation failed path");
+											Files.move(file.toPath(),
+													Paths.get(failedFilesPath + File.separator
+															+ "NameLengthValidationFailed" + File.separator + folderName
+															+ File.separator + file.getName()),
+													StandardCopyOption.REPLACE_EXISTING);
+											dbupdate = Manager.insertintoMandate_file_logs(encdmap, new Date());
+											if (dbupdate == true) {
+												log.info("Status updated in DB for File : " + file.getName());
+											} else {
+												log.info("Unable to updated in DB for File : " + file.getName());
+											}
+										}
+									} else {
+										encdmap.put("ERROR_CODE", ErrorConstants.ERR04.name());
+										encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+										log.info("File is already processed , Moving to name validation failed path");
+										Files.move(file.toPath(),
+												Paths.get(failedFilesPath + File.separator + "NameValidationFailed"
+														+ File.separator + folderName + File.separator
+														+ file.getName()),
+												StandardCopyOption.REPLACE_EXISTING);
+										dbupdate = Manager.insertintoMandate_file_logs(encdmap, new Date());
+										if (dbupdate == true) {
+											log.info("Status updated in DB for File : " + file.getName());
+										} else {
+											log.info("Unable to updated in DB for File : " + file.getName());
+										}
+									}
+								} catch (DateTimeParseException dtpe) {
+									log.error("Date parsing failed, moving to date validation failed path "
+											+ dtpe.getMessage());
+								} catch (IOException ex) {
+									log.error("IO Exception occured " + ex);
+								} catch (Exception e) {
+									log.info("Failed to validate the filename, Moving to name validation failed path");
+									Files.move(file.toPath(),
+											Paths.get(failedFilesPath + File.separator + "NameLengthValidationFailed"
+													+ File.separator + folderName + File.separator + file.getName()),
+											StandardCopyOption.REPLACE_EXISTING);
+								}
+
+								if (flag) {
+									File toProcessFolderPath = new File(MandateLauncher.getToProcessPath());
+
+									if (batchFiles.isEmpty()) {
+										String tailName = getTailName();
+
+//-------------------------------------- OLD SR NO LOGIC ------------------------------------------------ 
+//										String srNo = String.format("%06d", cnt);
+
+										String srNo = getNextSerialNumber();
+										toProcessFolderName = "MMS-" + folder.getName() + "-SBIN-SBIN" + tailName + "-"
+												+ currDate + "-" + srNo + "-ACCEPT";
+
+										MandateUtility.createToProcessFolder(toProcessFolderName, folder.getName());
+										cnt++;
+									}
+									Path source = Paths.get(getSrcPath(), folder.getName(), file.getName());
+									Path destDir = Paths.get(getToProcessPath(), folder.getName(), toProcessFolderName);
+									Path dest = destDir.resolve(finalName);
+									encdmap.put("FolderName", toProcessFolderName);
+									encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+									Files.createDirectories(destDir);
+									if (Files.exists(source)) {
+										Files.move(source, dest, StandardCopyOption.REPLACE_EXISTING);
+										batchFiles.add(dest);
+									} else {
+										log.error("Source not found , skipping : " + source.toAbsolutePath());
+									}
+									dbupdate = Manager.insertintoMandate_file_logs(encdmap, new Date());
+									if (dbupdate == true) {
+										log.info("Status updated in DB for File : " + file.getName());
+									} else {
+										log.info("Unable to updated in DB for File : " + file.getName());
+									}
+
+									if (batchFiles.size() == fileProcessLimit) {
+										log.info("Batch ready (" + batchFiles.size()
+												+ " files). Launching mandateMain for : " + toProcessFolderName);
+										ExecutorService service = Executors.newSingleThreadExecutor();
+										Runnable aadeshMain = new MandateMain(destDir.toFile(), folder.getName(),
+												batchFiles.size(), Zone);
+										service.execute(aadeshMain);
+										service.shutdown();
+
+										batchFiles.clear();
+										toProcessFolderName = null;
+										break;
+									}
+								} else {
+									log.info("Failed to validate the filename, hence unable to add to batch");
+								}
+							}
+
+							if (!batchFiles.isEmpty() && EOD) {
+								Path finalDir = batchFiles.get(0).getParent();
+								log.info("Final batch (" + batchFiles.size()
+										+ " files). Launching MandateMain for final batch");
+
+								ExecutorService service = Executors.newSingleThreadExecutor();
+								Runnable aadeshMain = new MandateMain(finalDir.toFile(), folder.getName(),
+										batchFiles.size(), Zone);
+								service.execute(aadeshMain);
+								service.shutdown();
+								batchFiles.clear();
+							}
+						} catch (SecurityException se) {
+							log.error("Security exception during file batch processing " + se.getMessage());
+						} catch (IOException ex) {
+							log.error("Unable to access files : " + ex.getMessage());
+						} catch (Exception e) {
+							log.info("Error executing the encryption task : " + e.getMessage());
+						}
+					} else {
+						files = folder.listFiles();
+					}
+				}
+				EOD = false;
+				log.info("There are no files available to process, hence thread is going to sleep for "
+						+ threadSleepTime);
+				Thread.sleep(threadSleepTime);
+
+			} catch (Exception e) {
+				log.info("Error occured during validation :" + e);
+			} finally {
+				log.info(
+						"********************************  || MANDATE_ENC UTILITY ENDED ||  ***********************************\n");
+			}
+		}
+	}
+
+	public static String getNextSerialNumber() throws IOException {
+		Path path = Paths.get(sequencePath);
+		DateTimeFormatter dayFormat = DateTimeFormatter.ofPattern("dd");
+		LocalDate today = LocalDate.now();
+		String todayDay = today.format(dayFormat);
+
+		int srNo = 1;
+
+		if (path.getParent() != null && !Files.exists(path.getParent())) {
+			Files.createDirectories(path.getParent());
+		}
+
+		if (Files.exists(path)) {
+			String content = Files.readString(path).trim();
+			String[] parts = content.split("-");
+
+			if (parts.length == 2) {
+				String storedDay = parts[1];
+				if (todayDay.equals(storedDay)) {
+					srNo = Integer.parseInt(parts[0]) + 1;
+				}
+			}
+		}
+
+		// Write to the specific path
+		Files.writeString(path, srNo + "-" + todayDay);
+
+		return String.format("%06d", srNo);
+	}
+}
+
+
+package com.tcs.sbi.main;
+
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.Signature;
+import java.security.SignatureException;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Calendar;
+import java.util.Comparator;
+import java.util.Currency;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+import javax.management.openmbean.InvalidKeyException;
+
+import org.apache.commons.logging.LogSource;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.bouncycastle.bcpg.ArmoredOutputStream;
+import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags;
+import org.bouncycastle.openpgp.PGPEncryptedDataGenerator;
+import org.bouncycastle.openpgp.PGPException;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.operator.jcajce.JcePGPDataEncryptorBuilder;
+import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyKeyEncryptionMethodGenerator;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.tcs.sbi.constants.ErrorConstants;
+import com.tcs.sbi.dbConnection.Manager;
+import com.tcs.sbi.launcher.MandateLauncher;
+import com.tcs.sbi.util.MandateUtility;
+import com.tcs.sbi.util.SFTPUtility;
+
+public class MandateMain implements Runnable {
+
+	int testCounter = 0;
+	File zipName;
+	String type;
+	Integer totalnoofRecords;
+	String Zone;
+
+	public MandateMain(File folderName, String type, Integer totalnoofRecords, String Zone) {
+		super();
+
+		this.zipName = folderName;
+		this.type = type;
+		this.totalnoofRecords = totalnoofRecords;
+		this.Zone = Zone;
+	}
+
+	private static final Logger log = LogManager.getLogger(MandateLauncher.class);
+
+	public void run() {
+		String srcPath = MandateLauncher.getToProcessPath() + File.separator + type;
+		String zippedPath = MandateLauncher.getZippedPath();
+		String signedPath = MandateLauncher.getSignedPath();
+		String signedFilePath = "";
+		String destPath = MandateLauncher.getDestPath();
+		String backUpPath = MandateLauncher.getBackUpPath();
+		PGPPublicKey pgpPublicKey = MandateLauncher.getPgpPublicKey();
+		HashMap<String, Object> encdmap = new HashMap<String, Object>();
+		String referenceNumber = null;
+		
+		try {
+			referenceNumber = MandateUtility.generateReferenceNumber();
+			boolean success = false;
+			boolean dbupdate = false;
+			
+			boolean isZipped = false;
+			boolean isSigned = false;
+			boolean isEncrypted = false;
+
+			encdmap.put("ReferenceNumber", referenceNumber);
+			encdmap.put("FileName", zipName.getName());
+			encdmap.put("fileCopiedTime", MandateUtility.getTimestamp());
+			encdmap.put("FileReadingTime", MandateUtility.getTimestamp());
+			encdmap.put("FileType", type);
+			encdmap.put("totalnoofRecords", totalnoofRecords);
+			encdmap.put("Zone", Zone);
+
+//			Zipping the folder contents
+			if (!isZipped) {
+				String newSrcPath = zipName.getAbsolutePath();
+				String zipFilePath = zippedPath + File.separator + zipName.getName() + ".zip";
+				MandateUtility.zipFolder(Paths.get(newSrcPath), Paths.get(zipFilePath));
+				String currDate = new java.text.SimpleDateFormat("ddMMyyyy").format(new java.util.Date());
+
+				isZipped = true;
+//			Signing the zipped file start
+				encdmap.put("Status", ErrorConstants.ZIP_SUCCESS.toString());
+				encdmap.put("statusENC", ErrorConstants.ZIP_SUCCESS.name().toString());
+				encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+				encdmap.put("EncryptionType", ErrorConstants.ZIPPED_FILE.toString());
+				if (isZipped) {
+					try {
+						signedFilePath = signedPath + File.separator + zipName.getName() + ".zip";
+
+						byte[] zipBytes = Files.readAllBytes(Paths.get(zipFilePath));
+						String base64Zip = Base64.getEncoder().encodeToString(zipBytes);
+						byte[] cmsSignature = MandateUtility.signZip(zipBytes, MandateLauncher.getPrivateKey(),
+								MandateLauncher.getPrivCert());
+						String base64Signature = Base64.getEncoder().encodeToString(cmsSignature);
+						String xml = MandateUtility.generateXml(base64Zip, base64Signature,
+								MandateLauncher.getEncodedpubcert());
+
+						Files.write(Paths.get(signedFilePath), xml.getBytes(StandardCharsets.UTF_8));
+						isSigned = true;
+						encdmap.put("Status", ErrorConstants.SIGN_SUCCESS.toString());
+						encdmap.put("statusENC", ErrorConstants.SIGN_SUCCESS.name().toString());
+						encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+						encdmap.put("EncryptionType", ErrorConstants.SIGNED_FILE.toString());
+//			Encrypting the zipped file
+						if (isSigned) {
+							try {
+								String encryptedFilePath = destPath + File.separator + zipName.getName() + ".zip";
+
+								byte[] signedBytes = Files.readAllBytes(Paths.get(signedFilePath));
+								String signName = Paths.get(signedFilePath).getFileName().toString();
+								try (OutputStream fileOut = new BufferedOutputStream(
+										new FileOutputStream(encryptedFilePath))) {
+
+									boolean encryptionResult = MandateUtility.rsaEncryptBytes(fileOut, signedBytes,
+											pgpPublicKey, true, true, signName);
+
+									if (encryptionResult) {
+										success = true;
+										isEncrypted = true;
+									} else {
+										throw new IOException("Encryption returned false");
+									}
+								}
+								encdmap.put("Status", ErrorConstants.ENCRYPTION_SUCCESS.toString());
+								encdmap.put("statusENC", ErrorConstants.ENCRYPTION_SUCCESS.name().toString());
+								encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+								encdmap.put("EncryptionType", ErrorConstants.ENCRYPTED_FILE.toString());
+								log.info("Successfully encrypted file: " + zipName.getName());
+								success = true;
+
+//							SFTP to server code begin 
+
+								Path sourceFilePath = Paths.get(encryptedFilePath);
+								if (zipName.getName().contains("CREATE")) {
+									Path createDestPath = Paths.get(MandateLauncher.getCreateDestPath(),
+											zipName.getName());
+									Files.copy(sourceFilePath, createDestPath, StandardCopyOption.REPLACE_EXISTING);
+									File file2 = new File(MandateLauncher.getCreateDestPath(), zipName.getName());
+									MultipartFile multipartFile = null;
+									try (FileInputStream input = new FileInputStream(file2)) {
+										multipartFile = new MockMultipartFile("file", zipName.getName() + ".zip",
+												"text/plain", input);
+									} catch (IOException e) {
+										log.info("Exception in converting file to multipartFile");
+									}
+
+									if (SFTPUtility.getsftpConnectiontoRemote()) {
+										if (SFTPUtility.upload(MandateLauncher.getOrgnDestCreatePath().trim(),
+												multipartFile)) {
+											log.info("File is successfully uploaded in the final server");
+											boolean d = file2.delete();
+											if (d == true)
+												log.info("Orgn file deleted");
+										} else {
+											log.info("File upload failed in the final server");
+										}
+										SFTPUtility.disconnect();
+									}
+								} else if (zipName.getName().contains("CANCEL")) {
+									Path cancelDestPath = Paths.get(MandateLauncher.getCancelDestPath(),
+											zipName.getName());
+									Files.copy(sourceFilePath, cancelDestPath, StandardCopyOption.REPLACE_EXISTING);
+									File file2 = new File(MandateLauncher.getCancelDestPath(), zipName.getName());
+									MultipartFile multipartFile = null;
+									try (FileInputStream input = new FileInputStream(file2)) {
+										multipartFile = new MockMultipartFile("file", zipName.getName() + ".zip",
+												"text/plain", input);
+									} catch (IOException e) {
+										log.info("Exception in converting file to multipartFile");
+									}
+
+									if (SFTPUtility.getsftpConnectiontoRemote()) {
+										if (SFTPUtility.upload(MandateLauncher.getOrgnDestCancelPath().trim(),
+												multipartFile)) {
+											log.info("File is successfully uploaded in the final server");
+											boolean d = file2.delete();
+											if (d == true)
+												log.info("Orgn file deleted");
+										} else {
+											log.info("File upload failed in the final server");
+										}
+										SFTPUtility.disconnect();
+									}
+								} else {
+									Path amendDestPath = Paths.get(MandateLauncher.getAmendDestPath(),
+											zipName.getName());
+									Files.copy(sourceFilePath, amendDestPath, StandardCopyOption.REPLACE_EXISTING);
+									File file2 = new File(MandateLauncher.getAmendDestPath(), zipName.getName());
+									MultipartFile multipartFile = null;
+									try (FileInputStream input = new FileInputStream(file2)) {
+										multipartFile = new MockMultipartFile("file", zipName.getName() + ".zip",
+												"text/plain", input);
+									} catch (IOException e) {
+										log.info("Exception in converting file to multipartFile");
+									}
+
+									if (SFTPUtility.getsftpConnectiontoRemote()) {
+										if (SFTPUtility.upload(MandateLauncher.getOrgnDestAmendPath().trim(),
+												multipartFile)) {
+											log.info("File is successfully uploaded in the final server");
+											boolean d = file2.delete();
+											if (d == true)
+												log.info("Orgn file deleted");
+										} else {
+											log.info("File upload failed in the final server");
+										}
+										SFTPUtility.disconnect();
+									}
+								}
+
+//							SFTP to server code end 
+
+//						source backup
+								String backUpString = backUpPath + File.separator + "SourceFilesBackUp" + File.separator
+										+ currDate + File.separator + zipName.getName() + ".zip";
+								Files.createDirectories(Paths.get(
+										backUpPath + File.separator + "SourceFilesBackUp" + File.separator + currDate));
+								MandateUtility.createBackUp(zipFilePath, backUpString);
+
+//						output backup
+								backUpString = backUpPath + File.separator + "EncryptedFilesBackUp" + File.separator
+										+ currDate + File.separator + zipName.getName() + ".zip";
+								Files.createDirectories(Paths.get(backUpPath + File.separator + "EncryptedFilesBackUp"
+										+ File.separator + currDate));
+								MandateUtility.createBackUp(encryptedFilePath, backUpString);
+								Files.delete(Paths.get(encryptedFilePath));
+								isEncrypted = true;
+							} catch (IOException ex) {
+								log.error("IO Exception occured " + ex.getMessage());
+							} catch (Exception e) {
+								log.info("Error encrypting the files : " + e.getMessage());
+							}
+						} else {
+							encdmap.put("Status", ErrorConstants.ENCRYPTION_FAILURE.toString());
+							encdmap.put("statusENC", ErrorConstants.ENCRYPTION_FAILURE.name().toString());
+							encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+							encdmap.put("EncryptionType", ErrorConstants.SIGNED_FILE.toString());
+//						encryption failed
+							log.info("Failed to encrypt the files");
+							
+//----------------------------------------------   Deleting toProcess files   ---------------------------------------------------
+							
+							MandateUtility.deleteDirectory(Paths.get(srcPath + File.separator + zipName.getName()));
+							Path signPath = Paths.get(zippedPath + File.separator + zipName.getName() + ".zip");
+							Files.deleteIfExists(signPath);
+							
+//--------------------------------------------    Moving from signed Path to failed encryption path    ----------------------------------------------
+
+							Files.move(Paths.get(signedPath + File.separator + zipName.getName() + ".zip"),
+									Paths.get(MandateLauncher.getEncryptingFailedPath() + File.separator + zipName.getName() + ".zip"),
+									StandardCopyOption.REPLACE_EXISTING);
+
+//------------------------------------------	Updating mandate file logs	  -----------------------------------------------
+							boolean fileLogUpdate = Manager
+									.updateMandate_file_logs(ErrorConstants.ERR79.name().toString(), zipName.getName());
+							if (fileLogUpdate) {
+								log.info("Error updated in file logs in case of encryption failure");
+							} else {
+								log.info("Unable to update file logs in case of encryption failure");
+							}
+						}
+					} catch (NoSuchAlgorithmException nsae) {
+						log.error("Encryption algorithm not found : " + nsae.getMessage());
+					} catch (InvalidKeyException ike) {
+						log.error("Invalid key used for signing" + ike.getMessage());
+					} catch (SignatureException se) {
+						log.error("Signature exception occured : " + se.getMessage());
+					} catch (IOException ex) {
+						log.error("IO Exception occured " + ex);
+					} catch (Exception e) {
+						log.info("Failed to sign the files");
+					}
+				} else {
+					encdmap.put("Status", ErrorConstants.SIGN_FAILURE.toString());
+					encdmap.put("statusENC", ErrorConstants.SIGN_FAILURE.name().toString());
+					encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+					encdmap.put("EncryptionType", ErrorConstants.ZIPPED_FILE.toString());
+//					signing failed
+					log.info("Failed to sign the files");
+					
+//----------------------------------------------   Deleting toProcess files   ---------------------------------------------------
+					
+					MandateUtility.deleteDirectory(Paths.get(srcPath + File.separator + zipName.getName()));
+
+//--------------------------------------------    Moving from zipped Path to failed sign path    ----------------------------------------------
+
+					Files.move(Paths.get(zippedPath + File.separator + zipName.getName() + ".zip"),
+							Paths.get(MandateLauncher.getSigningFailedPath() + File.separator + zipName.getName() + ".zip"),
+							StandardCopyOption.REPLACE_EXISTING);
+
+// ------------------------------------------ Updating mandate file logs -----------------------------------------------
+					boolean fileLogUpdate = Manager.updateMandate_file_logs(ErrorConstants.ERR78.name().toString(),
+							zipName.getName());
+					if (fileLogUpdate) {
+						log.info("Error updated in file logs in case of signing failure");
+					} else {
+						log.info("Unable to update file logs in case of signing failure");
+					}
+				}
+
+//				deleting files after processing/
+				try {
+					if (success) {
+						MandateUtility.deleteDirectory(Paths.get(newSrcPath));
+						Files.delete(Paths.get(zipFilePath));
+						Files.delete(Paths.get(signedFilePath));
+					}
+				} catch (SecurityException se) {
+					log.error("Security Exception occured : " + se.getMessage());
+				} catch (IOException ex) {
+					log.error("IO Exception occured " + ex);
+				} catch (Exception e) {
+					log.info("Error while deleting files from process Folders " + e.getMessage());
+				}
+			} else {
+				encdmap.put("Status", ErrorConstants.ZIP_FAILURE.toString());
+				encdmap.put("statusENC", ErrorConstants.ZIP_FAILURE.name().toString());
+				encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+//				zipping failed
+				log.info("Failed to zip the files");
+
+//--------------------------------------------    Moving from to process Path to failed zip path    ----------------------------------------------
+
+				Files.move(Paths.get(srcPath + File.separator + zipName.getName()),
+						Paths.get(MandateLauncher.getZippingFailedPath() + File.separator + zipName.getName()),
+						StandardCopyOption.ATOMIC_MOVE);
+
+//------------------------------------------	Updating mandate file logs	  -----------------------------------------------
+
+				boolean fileLogUpdate = Manager.updateMandate_file_logs(ErrorConstants.ERR77.name().toString(),
+						zipName.getName());
+				if (fileLogUpdate) {
+					log.info("Error updated in file logs in case of zipping failure");
+				} else {
+					log.info("Unable to update file logs in case of zipping failure");
+				}
+			}
+			if (!isZipped) {
+				encdmap.put("Status", ErrorConstants.ZIP_FAILURE.toString());
+				encdmap.put("statusENC", ErrorConstants.ZIP_FAILURE.name().toString());
+				encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+				boolean fileLogUpdate = Manager.updateMandate_file_logs(ErrorConstants.ERR77.name().toString(),
+						zipName.getName());
+				if (fileLogUpdate) {
+					log.info("Error updated in file logs in case of zipping failure");
+				} else {
+					log.info("Unable to update file logs in case of zipping failure");
+				}
+//--------------------------------------------    Moving from to process Path to failed zip path    ----------------------------------------------
+
+				Files.move(Paths.get(srcPath + File.separator + zipName.getName()),
+						Paths.get(MandateLauncher.getZippingFailedPath() + File.separator + zipName.getName()),
+						StandardCopyOption.ATOMIC_MOVE);
+			} else if (!isSigned) {
+				encdmap.put("Status", ErrorConstants.SIGN_FAILURE.toString());
+				encdmap.put("statusENC", ErrorConstants.SIGN_FAILURE.name().toString());
+				encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+				encdmap.put("EncryptionType", ErrorConstants.ZIPPED_FILE.toString());
+				boolean fileLogUpdate = Manager.updateMandate_file_logs(ErrorConstants.ERR78.name().toString(),
+						zipName.getName());
+				if (fileLogUpdate) {
+					log.info("Error updated in file logs in case of signing failure");
+				} else {
+					log.info("Unable to update file logs in case of signing failure");
+				}
+				
+//----------------------------------------------   Deleting toProcess files   ---------------------------------------------------
+				
+				MandateUtility.deleteDirectory(Paths.get(srcPath + File.separator + zipName.getName()));
+
+//--------------------------------------------    Moving from zipped Path to failed sign path    ----------------------------------------------
+
+				Files.move(Paths.get(zippedPath + File.separator + zipName.getName() + ".zip"),
+						Paths.get(MandateLauncher.getSigningFailedPath() + File.separator + zipName.getName() + ".zip"),
+						StandardCopyOption.REPLACE_EXISTING);
+			} else if (!isEncrypted) {
+				encdmap.put("Status", ErrorConstants.ENCRYPTION_FAILURE.toString());
+				encdmap.put("statusENC", ErrorConstants.ENCRYPTION_FAILURE.name().toString());
+				encdmap.put("lastUpdatedtime", MandateUtility.getTimestamp());
+				encdmap.put("EncryptionType", ErrorConstants.SIGNED_FILE.toString());
+				boolean fileLogUpdate = Manager.updateMandate_file_logs(ErrorConstants.ERR79.name().toString(),
+						zipName.getName());
+				if (fileLogUpdate) {
+					log.info("Error updated in file logs in case of encrypting failure");
+				} else {
+					log.info("Unable to update file logs in case of encrypting failure");
+				}
+				
+//----------------------------------------------   Deleting toProcess files   ---------------------------------------------------
+				
+				MandateUtility.deleteDirectory(Paths.get(srcPath + File.separator + zipName.getName()));
+				Path signPath = Paths.get(zippedPath + File.separator + zipName.getName() + ".zip");
+				Files.deleteIfExists(signPath);
+
+//--------------------------------------------    Moving from signed Path to failed encryption path    ----------------------------------------------
+
+				Files.move(Paths.get(signedPath + File.separator  + zipName.getName() + ".zip"),
+						Paths.get(MandateLauncher.getEncryptingFailedPath() + File.separator + zipName.getName() + ".zip"),
+						StandardCopyOption.REPLACE_EXISTING);
+			}
+
+			dbupdate = Manager.insertintoMandate_logs(encdmap, new Date());
+			if (dbupdate == true) {
+				log.info("Status updated in DB for File and the Reference Number is : " + referenceNumber);
+			} else {
+				log.info("Unable to updated in DB for File and the Reference Number is : " + referenceNumber);
+			}
+
+		} catch (SecurityException se) {
+			log.error("Security Exception Occured : " + se.getMessage());
+		} catch (IOException ex) {
+			log.error("IO Exception occured " + ex);
+		} catch (Exception e) {
+			log.error(e.getMessage());
+		}
+
+	}
+}
+
+
+package com.tcs.sbi.constants;
+
+public enum ErrorConstants {
+	CREATE_FILE_TYPE("CREATE"),
+	AMEND_FILE_TYPE("AMEND"),
+	CANCEL_FILE_TYPE("CANCEL"),
+	FILE_PICKED_FOR_DECRYPTION("00"),
+	DECRYPTED_UNSIGN_PENDING("01"),
+	DECRYPTION_FAILURE("02"),
+	UNSIGN_SUCCESS("03"),
+	UNSIGN_FAILURE("04"),
+	UNZIP_SUCCESS("05"),
+	UNZIP_FAILURE("06"),
+	DECRYPTION_SUCCESS("07"),
+	FAILED_FILE("35"),
+	ENCRYPTION_SUCCESS("09"), 
+	ENCRYPTION_FAILURE("10"),
+	SIGN_SUCCESS("11"),
+	SIGN_FAILURE("12"),
+	ZIP_SUCCESS("13"),
+	ZIP_FAILURE("14"),
+	ENCRYPTED_FILE("31"),
+	SIGNED_FILE("32"),
+	ZIPPED_FILE("34"),
+	
+	ERR01("FILE_NAME_FAILED"),
+	ERR02("FILE_FORMAT_FAILED"),
+	ERR03("DATE_VALIDATION_FAILED"),
+	ERR04("FILE_ALREADY_PROCESSED"),
+	ERR77("FILE_ZIPPING_FAILED"),
+	ERR78("FILE_SIGNING_FAILED"),
+	ERR79("FILE_ENCRYPTION_FAILED");
+
+	private final String text;
+
+	private ErrorConstants(final String text) {
+		this.text = text;
+	}
+
+	public String toString() {
+		return this.text;
+	}
+}
+
+
+
+package com.tcs.sbi.constants;
+
+
+public enum MandateConstants {
+	
+	LOGGER_FILENAME("ACHMandateLogger"), 
+	LOGGER_FILEPATH("LoggerFilePath");
+
+	private final String text;
+
+	private MandateConstants(final String text) {
+		this.text = text;
+	}
+
+	public String toString() {
+		return this.text;
+	}
+}
+
+
+package com.tcs.sbi.dbConnection;
+
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.Properties;
+
+import javax.sql.DataSource;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.tcs.sbi.launcher.MandateLauncher;
+import com.tcs.sbi.util.MandateUtility;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
+public class ConnectionManager {
+	private static final Logger log = LogManager.getLogger(MandateLauncher.class);
+	private static HikariDataSource dataSource;
+
+	private static Properties properties = new Properties();
+	private static String url,userName,password;
+
+	static {
+		try {
+			url = MandateUtility.aesDecrypt(MandateLauncher.getKey(), MandateLauncher.getIV(), MandateLauncher.getDbUrl());
+			userName = MandateUtility.aesDecrypt(MandateLauncher.getKey(),MandateLauncher.getIV(), MandateLauncher.getDbUser());
+			password = MandateUtility.aesDecrypt(MandateLauncher.getKey(), MandateLauncher.getIV(), MandateLauncher.getDbPwd());
+		} catch (UnsupportedEncodingException ue) {
+			log.info("Error when getting value from property file ",ue);
+		}
+
+		try {
+			Class.forName("oracle.jdbc.OracleDriver");
+			
+			HikariConfig config = new HikariConfig();
+			config.setJdbcUrl(url);
+			config.setUsername(userName);
+			config.setPassword(password);
+
+			config.setMaximumPoolSize(10);
+			config.setMinimumIdle(2);
+			config.setIdleTimeout(30000); 
+			config.setConnectionTimeout(30000); 
+			config.setMaxLifetime(1800000); 
+
+			dataSource = new HikariDataSource(config);
+
+		} catch (ClassNotFoundException e) {
+			log.info("There is an error in Hikari configuration.");
+			throw new RuntimeException("Failed to initialize connection pool", e);
+		}
+	}
+
+	public static Connection getConnection() throws SQLException {
+		return dataSource.getConnection();
+	}
+
+	public static DataSource getDataSource() {
+		return dataSource;
+	}
+
+	public static void shutdown() {
+		if (dataSource != null) {
+			dataSource.close();
+		}
+	}
+}
+
+
+package com.tcs.sbi.dbConnection;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.util.Date;
+import java.util.HashMap;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.tcs.sbi.launcher.MandateLauncher;
+import com.tcs.sbi.util.MandateEncProperties;
+
+public class Manager {
+	public static String fileCheckQuery = MandateEncProperties.getInstance().getProperty("FILTER_CHECK_QUERY");
+	public static String fileCheckQuery2 = MandateEncProperties.getInstance().getProperty("FILTER_CHECK_QUERY2");
+	public static String mandateEncInsertQuery = MandateEncProperties.getInstance().getProperty("INSERT_QUERY");
+	public static String mandateEncInsertQuery2 = MandateEncProperties.getInstance().getProperty("INSERT_QUERY2");
+	public static String fileLogUpdateQuery = MandateEncProperties.getInstance().getProperty("FILE_LOGS_UPDATE_QUERY");
+	private static final Logger log = LogManager.getLogger(MandateLauncher.class);
+	
+	public static boolean insertintoMandate_logs(HashMap<String, Object> encmaap, Date date) {
+		Connection con = null;
+		boolean update = false;
+		PreparedStatement prepareState = null;
+
+		try {
+
+			con = ConnectionManager.getConnection();
+			prepareState = con.prepareStatement(mandateEncInsertQuery);
+			prepareState.setObject(1, encmaap.get("ReferenceNumber"));
+			prepareState.setDate(2, new java.sql.Date(System.currentTimeMillis()));
+			prepareState.setObject(3, encmaap.get("FileName"));
+			prepareState.setObject(4, encmaap.get("FileType"));
+			prepareState.setObject(5, encmaap.get("ERROR_CODE"));
+			prepareState.setObject(6, encmaap.get("EncryptionType"));
+			prepareState.setObject(7, encmaap.get("totalnoofRecords"));
+			prepareState.setTimestamp(8, (Timestamp) encmaap.get("fileCopiedTime"));
+			prepareState.setObject(9, encmaap.get("Status"));
+			prepareState.setObject(10, encmaap.get("statusENC"));
+			prepareState.setTimestamp(11, (Timestamp) encmaap.get("lastUpdatedtime"));
+			prepareState.setObject(12,encmaap.get("Zone"));
+			
+			prepareState.executeUpdate();
+
+			update = true;
+
+		} catch (SQLException e) {
+			log.info("SQL exception coming for inserting value in table",e);
+		} 
+
+		finally {
+			try {
+				if (prepareState != null) {
+					prepareState.close();
+				}
+				if (con != null) {
+					con.close();
+				}
+
+			} catch (SQLException e) {
+				log.info("Sql exception in closing the db connection",e);
+			} 
+			
+		}
+		return update;
+	}
+	
+	public static boolean insertintoMandate_file_logs(HashMap<String, Object> encmaap, Date date) {
+		Connection con = null;
+		boolean update = false;
+		PreparedStatement prepareState = null;
+
+		try {
+
+			con = ConnectionManager.getConnection();
+			prepareState = con.prepareStatement(mandateEncInsertQuery2);
+			prepareState.setObject(1, encmaap.get("FileName"));
+			prepareState.setObject(2, encmaap.get("FolderName"));
+			prepareState.setObject(3, encmaap.get("ERROR_CODE"));
+			prepareState.setDate(4, new java.sql.Date(System.currentTimeMillis()));
+			prepareState.setTimestamp(5, (Timestamp) encmaap.get("lastUpdatedtime"));
+			prepareState.setString(6, "ENC");
+			prepareState.setObject(7,encmaap.get("Zone"));
+			prepareState.executeUpdate();
+
+			update = true;
+
+		} catch (SQLException e) {
+			log.info("SQL exception coming for inserting value in table",e);
+		}
+
+		finally {
+			try {
+				if (prepareState != null) {
+					prepareState.close();
+				}
+				if (con != null) {
+					con.close();
+				}
+
+			} catch (SQLException e) {
+				log.info("Sql exception in closing the db connection",e);
+			}
+		}
+		return update;
+	}
+	
+	public static boolean updateMandate_file_logs(String Error, String FolderName) {
+		Connection con = null;
+		boolean update = false;
+		PreparedStatement prepareState = null;
+
+		try {
+
+			con = ConnectionManager.getConnection();
+			prepareState = con.prepareStatement(fileLogUpdateQuery);
+			prepareState.setObject(1, Error);
+			prepareState.setObject(2, FolderName);
+			
+			prepareState.executeUpdate();
+
+			update = true;
+
+		} catch (SQLException e) {
+			log.info("SQL exception coming for inserting value in table",e);
+		}
+
+		finally {
+			try {
+				if (prepareState != null) {
+					prepareState.close();
+				}
+				if (con != null) {
+					con.close();
+				}
+
+			} catch (SQLException e) {
+				log.info("Sql exception in closing the db connection",e);
+			}
+		}
+		return update;
+	}
+
+	public static boolean isFilepreviouslyProcessed(String filename, Date date) {
+		boolean isProcessed = false;
+		Connection con = null;
+		PreparedStatement prepareState = null;
+		ResultSet resultset = null;
+		PreparedStatement prepareState2 = null;
+		ResultSet resultset2 = null;
+
+		try {
+			con = ConnectionManager.getConnection();
+			prepareState = con.prepareStatement(fileCheckQuery);
+			prepareState.setString(1, filename.trim());
+			prepareState.setDate(2, new java.sql.Date(date.getTime()));
+			
+			resultset = prepareState.executeQuery();
+		
+			if (resultset !=null && resultset.next()) {
+				int count = resultset.getInt(1);
+				if (count > 0) {
+					prepareState2 = con.prepareStatement(fileCheckQuery2);
+					prepareState2.setString(1, filename.trim());
+					prepareState2.setDate(2, new java.sql.Date(date.getTime()));
+					
+					resultset2 = prepareState2.executeQuery();
+					while (resultset2.next()) {
+						if(resultset2.getString("ERROR_CODE")==null) {
+							isProcessed = true;
+							return true;
+						}
+					}
+				}
+			}
+		} catch (SQLException e) {
+			isProcessed=true;
+			log.info("Sql exception in checking for proccessed file",e);
+		
+		} finally {
+			try {
+				if (resultset != null) {
+					resultset.close();
+				}
+				if (prepareState != null) {
+					prepareState.close();
+				}
+				if (con != null) {
+					con.close();
+				}
+
+			} catch (SQLException e2) {
+				log.info("Sql exception in closing the db connection",e2);
+			}
+		}
+
+		return isProcessed;
+	}
+}
+
+
+package com.tcs.sbi.util;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import com.tcs.sbi.launcher.MandateLauncher;
+
+public class MandateEncProperties {
+	public static final Logger log = LogManager.getLogger(MandateLauncher.class);
+//	E:\Akshay\MandateFilesStructure
+//	private static final String PROPERTIES_FILE = "F:\\MandateEncryptionUtility\\MandateEncryptionFilesStructure\\PROPERTY_FILE\\ACHMandateEncProperties.properties";
+//	private static final String PROPERTIES_FILE = new File("../MandateEncryption\\PROPERTY_FILE\\ACHMandateEncProperties.properties").getAbsolutePath();
+	private static final String PROPERTIES_FILE = new File("/AadeshApp/JAR/MandateEncryption/PROPERTY_FILE/ACHMandateEncProperties.properties").getAbsolutePath();
+	
+	private static MandateEncProperties instance = new MandateEncProperties();
+	private String propertyValue = null;
+	Properties prop;
+	
+	InputStream bisCM = null;
+	
+	private MandateEncProperties() {
+		loadProperties();
+	}
+	
+	@Override
+	protected void finalize() throws Throwable {
+		super.finalize();
+		unloadProperties();
+	}
+	
+	private void unloadProperties() {
+		log.info("Entering Method.");
+		try {
+			bisCM.close();
+		} catch (IOException ex) {
+			log.error("IO Exception occured " + ex);
+		} 
+		
+		log.info("Exiting Method.");
+	}
+	
+	private void loadProperties() {
+		log.info("Entering Method.");
+		
+		try {
+			bisCM = new FileInputStream(PROPERTIES_FILE);
+		} catch (FileNotFoundException e1) {
+			throw new RuntimeException(e1);
+		}
+		prop = new Properties();
+		try {
+			prop.load(bisCM);
+		} catch (IOException ex) {
+			log.error("IO Exception occured " + ex);
+		} 
+		log.info("Exiting method.");
+	}
+	
+	public String getProperty(String key) {
+		propertyValue = prop.getProperty(key);
+		if (null == propertyValue) {
+			throw new RuntimeException("Missing the value of the key " + key + " in .properties file");
+		}
+		return propertyValue;
+	}
+	
+	public static MandateEncProperties getInstance() {
+		if (instance == null) {
+			instance = new MandateEncProperties();
+		}
+		return instance;
+	}
+}
+
+
+
+package com.tcs.sbi.util;
+
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.nio.file.StandardCopyOption;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.Security;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import org.apache.commons.io.FilenameUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.bouncycastle.bcpg.ArmoredOutputStream;
+import org.bouncycastle.cert.jcajce.JcaCertStore;
+import org.bouncycastle.cms.CMSException;
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
+import org.bouncycastle.cms.CMSTypedData;
+import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPCompressedData;
+import org.bouncycastle.openpgp.PGPCompressedDataGenerator;
+import org.bouncycastle.openpgp.PGPEncryptedData;
+import org.bouncycastle.openpgp.PGPEncryptedDataGenerator;
+import org.bouncycastle.openpgp.PGPException;
+import org.bouncycastle.openpgp.PGPLiteralData;
+import org.bouncycastle.openpgp.PGPLiteralDataGenerator;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.PGPUtil;
+import org.bouncycastle.openpgp.operator.jcajce.JcePGPDataEncryptorBuilder;
+import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyKeyEncryptionMethodGenerator;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.OperatorCreationException;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.bouncycastle.util.Store;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.transform.*;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+import java.io.StringWriter;
+
+import org.apache.commons.io.FilenameUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.tcs.sbi.launcher.MandateLauncher;
+
+public class MandateUtility {
+
+	private static final Logger log = LogManager.getLogger(MandateLauncher.class);
+
+	public static PrivateKey getCertKeys(String cerFileStream, String password) throws Exception {
+
+		KeyStore keyStore = KeyStore.getInstance("PKCS12"); // , "BC");
+		try (FileInputStream fis = new FileInputStream(cerFileStream)) {
+			keyStore.load(fis, password.toCharArray());
+		}
+		String aliase = keyStore.aliases().nextElement();
+		java.security.Key key = keyStore.getKey(aliase, password.toCharArray());
+
+		return (PrivateKey) key;
+	}
+
+	public static String aesDecrypt(String key, String initVector, String encrypted)
+			throws UnsupportedEncodingException {
+		byte[] keyb = keyToB(key);
+		byte[] ivb = keyToB(initVector);
+		String dec = decrypt1(keyb, ivb, encrypted);
+		return dec;
+	}
+
+	public static String decrypt1(byte[] key, byte[] initVector, String encrypted) {
+		try {
+			// IvParameterSpec iv = new IvParameterSpec(initVector);
+			SecretKeySpec skeySpec = new SecretKeySpec(key, "AES");
+			Security.addProvider(new BouncyCastleProvider());
+			GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(16 * 8, initVector);
+			// Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
+			Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+			// cipher.init(Cipher.DECRYPT_MODE, skeySpec, iv);
+			cipher.init(Cipher.DECRYPT_MODE, skeySpec, gcmParameterSpec);
+
+			byte[] original = cipher.doFinal(Base64.getDecoder().decode(encrypted));
+			byte[] notOriginal = new String(original).replaceAll("\0", "").getBytes();
+			return new String(notOriginal);
+		} catch (NoSuchAlgorithmException e) {
+			log.error("Algorithm not found: {}", e);
+		} catch (NoSuchPaddingException e) {
+			log.error("Padding not found: {}", e);
+		} catch (InvalidKeyException e) {
+			log.error("Invalid key: {}", e);
+		} catch (InvalidAlgorithmParameterException e) {
+			log.error("Invalid algorithm parameter: {}", e);
+		} catch (IllegalBlockSizeException e) {
+			log.error("Illegal block size: {}", e);
+		} catch (BadPaddingException e) {
+			log.error("Bad padding: {}", e);
+		}
+
+		return null;
+	}
+
+	public static byte[] keyToB(String key) throws UnsupportedEncodingException {
+
+		byte[] keybyte = Base64.getDecoder().decode(key.getBytes("UTF-8"));
+
+		return keybyte;
+	}
+
+	public static PublicKey getPubkeyfrompath(String pubkeypath) {
+		PublicKey pubkey;
+		try {
+			CertificateFactory certfactory = CertificateFactory.getInstance("X.509");
+			FileInputStream fis = new FileInputStream(pubkeypath);
+			java.security.cert.Certificate certificate = certfactory.generateCertificate(fis);
+
+			pubkey = certificate.getPublicKey();
+			fis.close();
+			return pubkey;
+		} catch (Exception e) {
+			return null;
+		}
+	}
+
+	public static String generateReferenceNumber() {
+		String generateUUIDNo = String.format("%010d",
+				new BigInteger(UUID.randomUUID().toString().replace("-", ""), 16));
+		String unique_no = "SBIN" + generateUUIDNo.substring(generateUUIDNo.length() - 10);
+
+		return unique_no;
+	}
+
+	public static int returnMaxDays(int calMonth) {
+
+		int maxDays = 0;
+
+		if (calMonth == 1) {
+			maxDays = 31;
+		} else if (calMonth == 2) {
+			maxDays = 28;
+		} else if (calMonth == 3) {
+			maxDays = 31;
+		} else if (calMonth == 4) {
+			maxDays = 30;
+		} else if (calMonth == 5) {
+			maxDays = 31;
+		} else if (calMonth == 6) {
+			maxDays = 30;
+		} else if (calMonth == 7) {
+			maxDays = 31;
+		} else if (calMonth == 8) {
+			maxDays = 31;
+		} else if (calMonth == 9) {
+			maxDays = 30;
+		} else if (calMonth == 10) {
+			maxDays = 31;
+		} else if (calMonth == 11) {
+			maxDays = 30;
+		} else {
+			maxDays = 31;
+		}
+		return maxDays;
+	}
+
+	public static String generateRefrenceNumber() {
+
+		String generateUUIDNo = String.format("%010d",
+				new BigInteger(UUID.randomUUID().toString().replace("-", ""), 16));
+		String unique_no = "SBIN" + generateUUIDNo.substring(generateUUIDNo.length() - 10);
+
+		return unique_no;
+
+	}
+
+	public static Timestamp getTimestamp() {
+		Timestamp timestamp = null;
+		try {
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SS");
+			String strTime = sdf.format(new Date());
+			timestamp = Timestamp.valueOf(strTime);
+		} catch (IllegalArgumentException e) {
+			log.error("Invalid timestamp format: {}", e.getMessage(), e);
+		} catch (NullPointerException e) {
+			log.error("Timestamp string is null: {}", e.getMessage(), e);
+		}
+		return timestamp;
+	}
+
+	public static String readorgcontentfromfile(String path, HashMap<String, Object> encdmap) throws IOException {
+
+		String orgcontent = null;
+		StringBuilder str = new StringBuilder();
+		BufferedReader br = new BufferedReader(new FileReader(path));
+		int lineCount = 0;
+		try {
+
+			while ((orgcontent = br.readLine()) != null) {
+
+				str.append(orgcontent);
+				str.append("\r\n");
+				lineCount++;
+			}
+
+			if (lineCount > 0) {
+				lineCount = lineCount - 1;
+			}
+			encdmap.put("totalnoofRecords", lineCount);
+
+		} catch (IOException e) {
+			log.info("IO Exception occured : " + e.getMessage());
+		} finally {
+			br.close();
+
+		}
+
+		return str.toString();
+	}
+
+	public static void createToProcessFolder(String folderName, String type) {
+		try {
+			Path basePath = Paths.get(MandateLauncher.getToProcessPath());
+			Path toProcessPath = basePath.resolve(type).resolve(folderName).toAbsolutePath();
+
+			Files.createDirectories(toProcessPath);
+		} catch (IOException e) {
+			log.error("Error while creating the toProcessPath : " + e.getMessage());
+		}
+	}
+
+	public static void deleteDirectory(Path dir) throws IOException {
+		if (!Files.exists(dir)) {
+			log.info("File does not exists");
+		} else {
+			Files.walk(dir).sorted(Comparator.reverseOrder()).forEach(path -> {
+				try {
+					Files.delete(path);
+				} catch (IOException e) {
+					log.info("IO Exception Occured");
+				}
+			});
+		}
+	}
+
+	public static void zipFolder(Path sourceFolderPath, Path zippedPath) throws IOException {
+		try (ZipOutputStream zs = new ZipOutputStream(Files.newOutputStream(zippedPath))) {
+			Files.walk(sourceFolderPath).filter(path -> !Files.isDirectory(path)).forEach(path -> {
+				ZipEntry zipEntry = new ZipEntry(sourceFolderPath.relativize(path).toString());
+				try {
+					zs.putNextEntry(zipEntry);
+					Files.copy(path, zs);
+					zs.closeEntry();
+				} catch (IOException e) {
+					log.error(e);
+				} catch (Exception e) {
+					log.error("Error while zipping hte folder " + e);
+				}
+			});
+		}
+	}
+
+	public static void createBackUp(String source, String backup) {
+		try {
+			Files.copy(Paths.get(source), Paths.get(backup), StandardCopyOption.REPLACE_EXISTING);
+		} catch (IOException e) {
+			log.info("Error while creating backup : " + e);
+		}
+	}
+
+	public static X509Certificate loadX509Certificate(String certPath) {
+		X509Certificate certificate = null;
+		try (FileInputStream fis = new FileInputStream(certPath)) {
+			CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+			certificate = (X509Certificate) certFactory.generateCertificate(fis);
+		} catch (Exception e) {
+			log.error("Error loading X509Certificate: " + e.getMessage());
+		}
+		return certificate;
+	}
+
+	public static String base64Certificate(X509Certificate channelPubCert) {
+		String base64encodedCert = "";
+
+		try {
+			byte[] certificateByte = channelPubCert.getEncoded();
+			base64encodedCert = Base64.getEncoder().encodeToString(certificateByte);
+		} catch (CertificateEncodingException e) {
+			log.info("Error with Certificate Encoding");
+		}
+
+		return base64encodedCert;
+	}
+
+	public static String signDataCMS(byte[] dataToSign, PrivateKey privateKey, X509Certificate cert) {
+		try {
+			ContentSigner contentSigner = new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC")
+					.build(privateKey);
+			CMSSignedDataGenerator generator = new CMSSignedDataGenerator();
+			generator.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(
+					new JcaDigestCalculatorProviderBuilder().setProvider("BC").build()).build(contentSigner, cert));
+			List<X509Certificate> certList = new ArrayList<>();
+			certList.add(cert);
+			JcaCertStore certs = new JcaCertStore(certList);
+			generator.addCertificates(certs);
+			CMSTypedData cmsData = new CMSProcessableByteArray(dataToSign);
+			CMSSignedData signedData = generator.generate(cmsData, false);
+			return Base64.getEncoder().encodeToString(signedData.getEncoded());
+		} catch (CertificateEncodingException e) {
+			log.info("Exception Occured : " + e.getMessage());
+		} catch (OperatorCreationException e) {
+			log.info("Exception Occured : " + e.getMessage());
+		} catch (CMSException e) {
+			log.info("Exception Occured : " + e.getMessage());
+		} catch (IOException e) {
+			log.info("Exception Occured : " + e.getMessage());
+		}
+		return null;
+	}
+
+	public static byte[] signZip(byte[] zipBytes, PrivateKey privateKey, X509Certificate certificate) throws Exception {
+
+		CMSTypedData cmsData = new CMSProcessableByteArray(zipBytes);
+
+		CMSSignedDataGenerator generator = new CMSSignedDataGenerator();
+
+		ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(privateKey);
+
+		generator.addSignerInfoGenerator(
+				new JcaSignerInfoGeneratorBuilder(new JcaDigestCalculatorProviderBuilder().build()).build(signer,
+						certificate));
+
+		List<X509Certificate> certList = new ArrayList<>();
+		certList.add(certificate);
+
+		generator.addCertificates(new JcaCertStore(certList));
+
+		// 🔴 IMPORTANT → DETACHED = false
+		CMSSignedData signedData = generator.generate(cmsData, false);
+
+		return signedData.getEncoded();
+	}
+
+	@SuppressWarnings("rawtypes")
+	public static String signBase64Content(String base64Content, PrivateKey privateKey, X509Certificate certificate)
+			throws Exception {
+
+		byte[] dataToSign = base64Content.getBytes(StandardCharsets.UTF_8);
+
+		CMSTypedData cmsData = new CMSProcessableByteArray(dataToSign);
+
+		CMSSignedDataGenerator generator = new CMSSignedDataGenerator();
+
+		ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(privateKey);
+
+		List<X509Certificate> certList = new ArrayList<>();
+		certList.add(certificate);
+		org.bouncycastle.util.Store certs = new JcaCertStore(certList);
+		generator.addSignerInfoGenerator(
+				new JcaSignerInfoGeneratorBuilder(new JcaDigestCalculatorProviderBuilder().build()).build(signer,
+						certificate));
+		generator.addCertificates(certs);
+		CMSSignedData cmssigndata = generator.generate(cmsData, false);
+
+		byte[] signeddatabytes = cmssigndata.getEncoded();
+		String signed = org.bouncycastle.util.encoders.Base64.toBase64String(signeddatabytes);
+		return signed;
+	}
+
+	public static String generateXml(String orgContent, String signature, String certificate) throws Exception {
+		DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+		DocumentBuilder db = dbf.newDocumentBuilder();
+		Document doc = db.newDocument();
+		Element envelope = doc.createElement("Envelope");
+		doc.appendChild(envelope);
+		Element org = doc.createElement("OrgContent");
+		org.setTextContent(orgContent);
+		envelope.appendChild(org);
+		Element sig = doc.createElement("Signature");
+		sig.setTextContent(signature);
+		envelope.appendChild(sig);
+		Element cert = doc.createElement("Certificate");
+		cert.setTextContent(certificate);
+		envelope.appendChild(cert);
+		Transformer transformer = TransformerFactory.newInstance().newTransformer();
+		transformer.setOutputProperty(OutputKeys.STANDALONE, "yes");
+		transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+		StringWriter writer = new StringWriter();
+		transformer.transform(new DOMSource(doc), new StreamResult(writer));
+
+		return writer.toString();
+	}
+
+	public static X509Certificate x509certget(String privCerPath, String password) throws KeyStoreException {
+		// TODO Auto-generated method stub
+		Certificate cert = null;
+		KeyStore ks = KeyStore.getInstance("PKCS12");
+		try (FileInputStream ksfile = new FileInputStream(privCerPath)) {
+			ks.load(ksfile, password.toCharArray());
+			String Alias = ks.aliases().nextElement();
+			cert = ks.getCertificate(Alias);
+			if (cert instanceof X509Certificate) {
+				return (X509Certificate) cert;
+			} else {
+
+			}
+		} catch (IOException | NoSuchAlgorithmException | CertificateException e) {
+			log.info("Exception occured while getting the x509 ceritificate");
+		}
+		return (X509Certificate) cert;
+	}
+
+	public static boolean rsaEncryptFile(OutputStream out, String fileName, PGPPublicKey encKey, boolean armor,
+			boolean withIntegrityCheck) throws IOException {
+
+		boolean encrypted = false;
+
+		Security.addProvider(new BouncyCastleProvider());
+
+		ArmoredOutputStream armoredOut = null;
+		if (armor) {
+			armoredOut = new ArmoredOutputStream(out);
+			out = armoredOut;
+		}
+
+		// 1️⃣ Compressed data generator
+		PGPCompressedDataGenerator comData = new PGPCompressedDataGenerator(PGPCompressedData.ZIP);
+
+		ByteArrayOutputStream bOut = new ByteArrayOutputStream();
+
+		OutputStream compressedOut = comData.open(bOut); // MUST be closed!
+
+		// 2️⃣ Literal data must be written AND closed
+		PGPUtil.writeFileToLiteralData(compressedOut, PGPLiteralData.BINARY, new File(fileName));
+		compressedOut.close(); // ❗ REQUIRED: finalizes ZIP structure
+
+		// 3️⃣ Encrypt the compressed data
+		JcePGPDataEncryptorBuilder encryptor = new JcePGPDataEncryptorBuilder(PGPEncryptedData.AES_256)
+				.setWithIntegrityPacket(withIntegrityCheck).setSecureRandom(new SecureRandom()).setProvider("BC");
+
+		PGPEncryptedDataGenerator encGen = new PGPEncryptedDataGenerator(encryptor);
+
+		encGen.addMethod(new JcePublicKeyKeyEncryptionMethodGenerator(encKey).setProvider("BC")
+				.setSecureRandom(new SecureRandom()));
+
+		byte[] bytes = bOut.toByteArray();
+
+		OutputStream encryptedOut = null;
+		try {
+			encryptedOut = encGen.open(out, bytes.length);
+		} catch (IOException e) {
+			log.info("IO Excepton occured");
+		} catch (PGPException e) {
+			log.info("PGP Excepton occured");
+		}
+		encryptedOut.write(bytes);
+		encryptedOut.close(); // close encrypted block
+
+		if (armor) {
+			armoredOut.close(); // finalize ascii armor
+		}
+
+		out.close();
+
+		comData.close(); // safe to close AFTER compressedOut closed
+
+		encrypted = true;
+		return encrypted;
+	}
+
+	public static boolean rsaEncryptBytes(OutputStream out, byte[] inputBytes, PGPPublicKey encKey, boolean armor,
+			boolean withIntegrityCheck, String fileName) throws Exception {
+		boolean encrypted = false;
+		Security.addProvider(new BouncyCastleProvider());
+
+		if (armor) {
+			out = new ArmoredOutputStream(out);
+		}
+
+		ByteArrayOutputStream bOut = new ByteArrayOutputStream();
+
+		PGPCompressedDataGenerator comData = new PGPCompressedDataGenerator(PGPCompressedData.ZIP);
+		PGPLiteralDataGenerator lGen = new PGPLiteralDataGenerator();
+		try (OutputStream pOut = lGen.open(comData.open(bOut), PGPLiteralData.BINARY, fileName, inputBytes.length,
+				new Date())) {
+			pOut.write(inputBytes);
+		}
+//	    OutputStream literalOut = comData.open(bOut);
+//	    literalOut.write(inputBytes);
+//	    literalOut.close();
+		comData.close();
+
+		JcePGPDataEncryptorBuilder encryptorBuilder = new JcePGPDataEncryptorBuilder(PGPEncryptedData.AES_256)
+				.setWithIntegrityPacket(withIntegrityCheck).setSecureRandom(new SecureRandom()).setProvider("BC");
+
+		PGPEncryptedDataGenerator encGen = new PGPEncryptedDataGenerator(encryptorBuilder);
+
+		encGen.addMethod(new JcePublicKeyKeyEncryptionMethodGenerator(encKey).setProvider("BC"));
+
+		byte[] bytes = bOut.toByteArray();
+
+		try (OutputStream cOut = encGen.open(out, bytes.length)) {
+			cOut.write(bytes);
+		}
+
+		out.close();
+		encrypted = true;
+		return encrypted;
+	}
+
+	public static boolean checkToProcess() {
+		File toProcessFolderPath = new File(MandateLauncher.getToProcessPath());
+
+		if (toProcessFolderPath.listFiles().length != 0) {
+			return false;
+		} else {
+			return true;
+		}
+	}
+}
+
+
+
+package com.tcs.sbi.util;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.nio.file.Files;
+import java.util.Vector;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.ChannelSftp.LsEntry;
+import com.tcs.sbi.launcher.MandateLauncher;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.JSchException;
+import com.jcraft.jsch.Session;
+import com.jcraft.jsch.SftpATTRS;
+import com.jcraft.jsch.SftpException;
+import org.springframework.web.multipart.MultipartFile;
+
+public class SFTPUtility {
+
+	static Session session = null;
+	static ChannelSftp channel;
+	@SuppressWarnings("unused")
+	private static final Logger log = LogManager.getLogger(MandateLauncher.class);
+
+	public static boolean getsftpConnectiontoRemote() {
+
+		boolean returnstatus = false;
+
+		// String returnStatus = null;
+		try {
+
+			String user = MandateUtility.aesDecrypt(MandateLauncher.getKey(), MandateLauncher.getIV(),
+					MandateLauncher.getSftpUsername());
+//			String password = MandateUtility.aesDecrypt(MandateLauncher.getKey(), MandateLauncher.getIV(), MandateLauncher.getSftpPwd());
+			String privateKeyPath = MandateUtility.aesDecrypt(MandateLauncher.getKey(), MandateLauncher.getIV(),
+					MandateLauncher.getServerPrivateKeypath());
+			JSch jsch = new JSch();
+			jsch.addIdentity(privateKeyPath.trim());
+			session = jsch.getSession(user, MandateLauncher.getSftpHost(),
+					Integer.parseInt(MandateLauncher.getSftpPort()));
+//			System.out.println(user+" "+privateKeyPath+" "+MandateLauncher.getSftpHost()+" "+MandateLauncher.getSftpPort());
+			java.util.Properties config = new java.util.Properties();
+			config.put("StrictHostKeyChecking", "no");
+			config.put("PreferredAuthentications", "publickey");
+			session.setConfig(config);
+			session.connect();
+
+			channel = (ChannelSftp) session.openChannel("sftp");
+			channel.connect();
+			returnstatus = true;
+
+		} catch (JSchException e) {
+			returnstatus = false;
+			log.error("Error during SFTP operation: " + e);
+		} catch (NumberFormatException e) {
+			returnstatus = false;
+			log.error("Invalid port number: ");
+		} catch (NullPointerException e) {
+			returnstatus = false;
+			log.error("One of the required parameters is null: ");
+		} catch (UnsupportedEncodingException e) {
+			returnstatus = false;
+			log.info("Exception in method getsftpConnectiontoRemote()");
+		}
+
+		return returnstatus;
+
+	}
+
+	public static void disconnect() {
+		if (channel != null && channel.isConnected()) {
+			channel.disconnect();
+
+		}
+		if (session != null && session.isConnected()) {
+			session.disconnect();
+
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	public static boolean upload(String remoteDir, MultipartFile file) {
+
+		boolean isuploaded = false;
+		InputStream inputstream = null;
+
+		try {
+
+			channel.cd(remoteDir);
+			inputstream = file.getInputStream();
+			channel.put(inputstream, file.getOriginalFilename());
+			isuploaded = true;
+
+		} catch (FileNotFoundException e) {
+			log.error("File not found: ");
+			isuploaded = false;
+		} catch (SftpException e) {
+			log.error("SFTP specific error: ");
+			isuploaded = false;
+		} catch (IOException e) {
+			log.error("I/O error occurred during file upload: ");
+			isuploaded = false;
+		} catch (NullPointerException e) {
+			log.error("A required parameter is null: ");
+			isuploaded = false;
+		} finally {
+
+			if (inputstream != null) {
+				try {
+					inputstream.close();
+				} catch (IOException e) {
+					log.info("error while closing inputstream");
+				}
+			}
+		}
+
+		return isuploaded;
+	}
+}
