@@ -1367,3 +1367,452 @@ public class SftpUploadService {
         }
     }
 }
+
+
+
+package com.tcs.npci.outward.util;
+
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.Security;
+import java.security.cert.CertificateFactory;
+import java.util.Date;
+
+import org.bouncycastle.bcpg.ArmoredOutputStream;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPCompressedData;
+import org.bouncycastle.openpgp.PGPCompressedDataGenerator;
+import org.bouncycastle.openpgp.PGPEncryptedData;
+import org.bouncycastle.openpgp.PGPEncryptedDataGenerator;
+import org.bouncycastle.openpgp.PGPLiteralData;
+import org.bouncycastle.openpgp.PGPLiteralDataGenerator;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter;
+import org.bouncycastle.openpgp.operator.jcajce.JcePGPDataEncryptorBuilder;
+import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyKeyEncryptionMethodGenerator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import com.tcs.npci.outward.config.properties.CryptoProperties;
+import com.tcs.npci.outward.constant.AppConstants;
+import com.tcs.npci.outward.exception.CryptoOperationException;
+
+import jakarta.annotation.PostConstruct;
+
+@Component
+public class PgpEncryptionUtility {
+
+    private static final Logger log = LoggerFactory.getLogger(PgpEncryptionUtility.class);
+
+    private final CryptoProperties cryptoProperties;
+    private PGPPublicKey pgpPublicKey;
+
+    public PgpEncryptionUtility(CryptoProperties cryptoProperties) {
+        this.cryptoProperties = cryptoProperties;
+    }
+
+    @PostConstruct
+    public void init() {
+        try {
+            Security.addProvider(new BouncyCastleProvider());
+            String publicKeyPath = cryptoProperties.getPgp().getPublicKeyPath();
+            
+            // Extract standard Java PublicKey from X.509 certificate[span_0](start_span)[span_0](end_span)
+            PublicKey javaPublicKey;
+            try (FileInputStream fis = new FileInputStream(publicKeyPath)) {
+                CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+                java.security.cert.Certificate certificate = certFactory.generateCertificate(fis);
+                javaPublicKey = certificate.getPublicKey();
+            }
+
+            // Convert to BouncyCastle PGPPublicKey[span_1](start_span)[span_1](end_span)
+            this.pgpPublicKey = new JcaPGPKeyConverter()
+                    .getPGPPublicKey(PGPPublicKey.RSA_GENERAL, javaPublicKey, new Date());
+                    
+            log.info("PGP Encryption Utility initialized successfully with public key.");
+        } catch (Exception e) {
+            log.error("Failed to initialize PGP public key", e);
+            throw new RuntimeException("Could not initialize PGP keys", e);
+        }
+    }
+
+    /**
+     * Encrypts the signed byte array using BouncyCastle PGP APIs[span_2](start_span)[span_2](end_span).
+     */
+    public void encryptFile(Path inputPath, Path outputPath, String internalFileName) {
+        try {
+            byte[] inputBytes = Files.readAllBytes(inputPath);
+            
+            try (OutputStream fileOut = new BufferedOutputStream(Files.newOutputStream(outputPath));
+                 OutputStream armoredOut = new ArmoredOutputStream(fileOut)) {
+
+                // 1. Compress the data into ZIP format[span_3](start_span)[span_3](end_span)
+                ByteArrayOutputStream bOut = new ByteArrayOutputStream();
+                PGPCompressedDataGenerator comData = new PGPCompressedDataGenerator(PGPCompressedData.ZIP);
+                PGPLiteralDataGenerator lGen = new PGPLiteralDataGenerator();
+                
+                try (OutputStream pOut = lGen.open(comData.open(bOut), PGPLiteralData.BINARY, internalFileName, inputBytes.length, new Date())) {
+                    pOut.write(inputBytes);
+                }
+                comData.close();
+
+                // 2. Configure AES-256 encryption builder[span_4](start_span)[span_4](end_span)
+                JcePGPDataEncryptorBuilder encryptorBuilder = new JcePGPDataEncryptorBuilder(PGPEncryptedData.AES_256)
+                        .setWithIntegrityPacket(true)
+                        .setSecureRandom(new SecureRandom())
+                        .setProvider("BC");
+
+                PGPEncryptedDataGenerator encGen = new PGPEncryptedDataGenerator(encryptorBuilder);
+                encGen.addMethod(new JcePublicKeyKeyEncryptionMethodGenerator(pgpPublicKey).setProvider("BC"));
+
+                // 3. Encrypt the compressed bytes[span_5](start_span)[span_5](end_span)
+                byte[] compressedBytes = bOut.toByteArray();
+                try (OutputStream cOut = encGen.open(armoredOut, compressedBytes.length)) {
+                    cOut.write(compressedBytes);
+                }
+            }
+        } catch (Exception e) {
+            throw new CryptoOperationException(AppConstants.TECHNICAL_ERROR.getValue(), "Failed to PGP encrypt the file", e);
+        }
+    }
+}
+
+
+
+
+package com.tcs.npci.outward.util;
+
+import java.io.FileInputStream;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.Security;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import org.bouncycastle.cert.jcajce.JcaCertStore;
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
+import org.bouncycastle.cms.CMSTypedData;
+import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+import com.tcs.npci.outward.config.properties.CryptoProperties;
+import com.tcs.npci.outward.constant.AppConstants;
+import com.tcs.npci.outward.exception.CryptoOperationException;
+
+import jakarta.annotation.PostConstruct;
+
+@Component
+public class SignatureUtility {
+
+    private static final Logger log = LoggerFactory.getLogger(SignatureUtility.class);
+
+    private final CryptoProperties cryptoProperties;
+    private PrivateKey privateKey;
+    private X509Certificate certificate;
+    private String base64Certificate;
+
+    public SignatureUtility(CryptoProperties cryptoProperties) {
+        this.cryptoProperties = cryptoProperties;
+    }
+
+    @PostConstruct
+    public void init() {
+        try {
+            Security.addProvider(new BouncyCastleProvider());
+            
+            String keystorePath = cryptoProperties.getKeystore().getPrivateKeyPath();
+            String password = cryptoProperties.getKeystore().getPassword();
+
+            // Load PKCS12 Keystore[span_0](start_span)[span_0](end_span)
+            KeyStore keyStore = KeyStore.getInstance("PKCS12");
+            try (FileInputStream fis = new FileInputStream(keystorePath)) {
+                keyStore.load(fis, password.toCharArray());
+            }
+
+            String alias = keyStore.aliases().nextElement();
+            this.privateKey = (PrivateKey) keyStore.getKey(alias, password.toCharArray());
+            
+            Certificate cert = keyStore.getCertificate(alias);
+            if (cert instanceof X509Certificate) {
+                this.certificate = (X509Certificate) cert;
+                this.base64Certificate = Base64.getEncoder().encodeToString(this.certificate.getEncoded());
+            } else {
+                throw new IllegalStateException("Certificate in keystore is not an X509Certificate");
+            }
+            
+            log.info("Signature Utility initialized successfully with private key and certificate.");
+        } catch (Exception e) {
+            log.error("Failed to initialize Keystore for signing", e);
+            throw new RuntimeException("Could not initialize signing keys", e);
+        }
+    }
+
+    /**
+     * Reads the zip, signs it, and writes the XML wrapper to the destination path.
+     */
+    public void signAndWrapXml(Path inputZipPath, Path outputXmlPath) {
+        try {
+            byte[] zipBytes = Files.readAllBytes(inputZipPath);
+            
+            // Generate CMS Signature[span_1](start_span)[span_1](end_span)
+            byte[] cmsSignature = signZip(zipBytes);
+            
+            String base64Zip = Base64.getEncoder().encodeToString(zipBytes);
+            String base64Signature = Base64.getEncoder().encodeToString(cmsSignature);
+            
+            // Generate XML Wrapper[span_2](start_span)[span_2](end_span)
+            String xmlContent = generateXml(base64Zip, base64Signature, base64Certificate);
+            
+            Files.write(outputXmlPath, xmlContent.getBytes(StandardCharsets.UTF_8));
+            log.debug("Successfully created signed XML wrapper at {}", outputXmlPath);
+            
+        } catch (Exception e) {
+            throw new CryptoOperationException(AppConstants.TECHNICAL_ERROR.getValue(), "Failed to sign and wrap XML", e);
+        }
+    }
+
+    /**
+     * Creates a CMS signature using BouncyCastle[span_3](start_span)[span_3](end_span).
+     */
+    private byte[] signZip(byte[] zipBytes) throws Exception {
+        CMSTypedData cmsData = new CMSProcessableByteArray(zipBytes);
+        CMSSignedDataGenerator generator = new CMSSignedDataGenerator();
+
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").build(privateKey);
+
+        generator.addSignerInfoGenerator(
+                new JcaSignerInfoGeneratorBuilder(new JcaDigestCalculatorProviderBuilder().setProvider("BC").build())
+                .build(signer, certificate));
+
+        List<X509Certificate> certList = new ArrayList<>();
+        certList.add(certificate);
+
+        generator.addCertificates(new JcaCertStore(certList));
+
+        // DETACHED = false[span_4](start_span)[span_4](end_span)
+        CMSSignedData signedData = generator.generate(cmsData, false);
+        return signedData.getEncoded();
+    }
+
+    /**
+     * Constructs the XML envelope containing original content, signature, and certificate[span_5](start_span)[span_5](end_span).
+     */
+    private String generateXml(String orgContent, String signature, String cert) throws Exception {
+        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+        DocumentBuilder db = dbf.newDocumentBuilder();
+        Document doc = db.newDocument();
+        
+        Element envelope = doc.createElement("Envelope");
+        doc.appendChild(envelope);
+        
+        Element org = doc.createElement("OrgContent");
+        org.setTextContent(orgContent);
+        envelope.appendChild(org);
+        
+        Element sig = doc.createElement("Signature");
+        sig.setTextContent(signature);
+        envelope.appendChild(sig);
+        
+        Element certificateNode = doc.createElement("Certificate");
+        certificateNode.setTextContent(cert);
+        envelope.appendChild(certificateNode);
+        
+        Transformer transformer = TransformerFactory.newInstance().newTransformer();
+        transformer.setOutputProperty(OutputKeys.STANDALONE, "yes");
+        transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+        
+        StringWriter writer = new StringWriter();
+        transformer.transform(new DOMSource(doc), new StreamResult(writer));
+        
+        return writer.toString();
+    }
+}
+
+
+
+
+package com.tcs.npci.outward.util;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ZipUtility {
+
+    private static final Logger log = LoggerFactory.getLogger(ZipUtility.class);
+
+    /**
+     * Zips the contents of the given source folder into the specified zip file path[span_0](start_span)[span_0](end_span).
+     * 
+     * @param sourceFolderPath The directory containing files to zip.
+     * @param zippedPath The destination path for the .zip file.
+     * @throws IOException If an I/O error occurs.
+     */
+    public void zipFolder(Path sourceFolderPath, Path zippedPath) throws IOException {
+        log.debug("Starting to zip folder: {} to {}", sourceFolderPath, zippedPath);
+        
+        // Ensure parent directories exist
+        if (zippedPath.getParent() != null && !Files.exists(zippedPath.getParent())) {
+            Files.createDirectories(zippedPath.getParent());
+        }
+
+        try (ZipOutputStream zs = new ZipOutputStream(Files.newOutputStream(zippedPath));
+             Stream<Path> paths = Files.walk(sourceFolderPath)) {
+             
+            paths.filter(path -> !Files.isDirectory(path)).forEach(path -> {
+                ZipEntry zipEntry = new ZipEntry(sourceFolderPath.relativize(path).toString());
+                try {
+                    zs.putNextEntry(zipEntry);
+                    Files.copy(path, zs);
+                    zs.closeEntry();
+                } catch (IOException e) {
+                    log.error("Failed to add file {} to zip", path.getFileName(), e);
+                    throw new RuntimeException("Zipping process failed for file: " + path.getFileName(), e);
+                }
+            });
+        }
+        log.debug("Successfully zipped folder to {}", zippedPath);
+    }
+
+    /**
+     * Deletes a directory and all of its contents[span_1](start_span)[span_1](end_span).
+     * 
+     * @param dir The directory to delete.
+     * @throws IOException If an I/O error occurs.
+     */
+    public void deleteDirectory(Path dir) throws IOException {
+        if (!Files.exists(dir)) {
+            log.debug("Directory {} does not exist, skipping deletion.", dir);
+            return;
+        }
+
+        try (Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder())
+                .forEach(path -> {
+                    try {
+                        Files.delete(path);
+                    } catch (IOException e) {
+                        log.error("Failed to delete path: {}", path, e);
+                    }
+                });
+        }
+        log.debug("Successfully deleted directory {}", dir);
+    }
+}
+
+
+
+
+package com.tcs.npci.outward.util;
+
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.Security;
+import java.util.Base64;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class AesEncryptionUtility {
+    
+    private static final Logger log = LoggerFactory.getLogger(AesEncryptionUtility.class);
+    private static final String AES_TRANSFORMATION = "AES/GCM/NoPadding";
+
+    public AesEncryptionUtility() {
+        Security.addProvider(new BouncyCastleProvider());
+    }
+
+    /**
+     * Decrypts AES encrypted strings (e.g., database or SFTP credentials from properties) 
+     * using a provided Base64 encoded Key and Initialization Vector (IV)[span_0](start_span)[span_0](end_span).
+     * 
+     * @param key Base64 encoded AES key
+     * @param initVector Base64 encoded Initialization Vector
+     * @param encrypted The encrypted string to decrypt
+     * @return The decrypted plain text string
+     */
+    public String aesDecrypt(String key, String initVector, String encrypted) {
+        if (encrypted == null || encrypted.isBlank()) {
+            return encrypted;
+        }
+
+        try {
+            byte[] keyBytes = Base64.getDecoder().decode(key.getBytes(StandardCharsets.UTF_8));
+            byte[] ivBytes = Base64.getDecoder().decode(initVector.getBytes(StandardCharsets.UTF_8));
+
+            SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
+            
+            // 128-bit authentication tag length[span_1](start_span)[span_1](end_span)
+            GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(128, ivBytes); 
+            
+            Cipher cipher = Cipher.getInstance(AES_TRANSFORMATION);
+            cipher.init(Cipher.DECRYPT_MODE, skeySpec, gcmParameterSpec);
+
+            byte[] originalBytes = cipher.doFinal(Base64.getDecoder().decode(encrypted));
+            
+            // Remove null characters if any were padded[span_2](start_span)[span_2](end_span)
+            String decryptedString = new String(originalBytes, StandardCharsets.UTF_8).replace("\0", "");
+            
+            return decryptedString;
+
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException |
+                 InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
+            log.error("Error decrypting AES value: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to decrypt secure property value", e);
+        }
+    }
+}
