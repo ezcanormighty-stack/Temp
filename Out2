@@ -637,3 +637,79 @@ public class OutwardEncLog {
 }
 
 
+
+
+package com.tcs.npci.outward.repository;
+
+import java.sql.Date;
+import java.util.Optional;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import com.tcs.npci.outward.entity.OutwardFileLog;
+
+@Repository
+public interface OutwardFileLogRepository extends JpaRepository<OutwardFileLog, Long> {
+
+    // Replaces legacy Manager.isFilepreviouslyProcessed() query check
+    boolean existsByFileNameAndEntryDateAndErrorCodeIsNull(String fileName, Date entryDate);
+
+    // Helps in updating specific file logs during processing failures
+    Optional<OutwardFileLog> findByFileNameAndFolderName(String fileName, String folderName);
+}
+
+
+
+package com.tcs.npci.outward.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import com.tcs.npci.outward.entity.OutwardEncLog;
+
+@Repository
+public interface OutwardEncLogRepository extends JpaRepository<OutwardEncLog, String> {
+    
+    // Standard JpaRepository provides save(), findById(), etc. 
+    // Add custom query methods here if needed for fetching specific batches.
+}
+
+
+
+package com.tcs.npci.outward.exception;
+
+public class BatchProcessingException extends RuntimeException {
+
+    private static final long serialVersionUID = 1L;
+
+    private String errorCode;
+    private String errorMessage;
+
+    public BatchProcessingException(String errorCode) {
+        super();
+        this.errorCode = errorCode;
+    }
+
+    public BatchProcessingException(String errorCode, String errorMessage) {
+        super(errorMessage);
+        this.errorCode = errorCode;
+        this.errorMessage = errorMessage;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    public void setErrorCode(String errorCode) {
+        this.errorCode = errorCode;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void setErrorMessage(String errorMessage) {
+        this.errorMessage = errorMessage;
+    }
+}
