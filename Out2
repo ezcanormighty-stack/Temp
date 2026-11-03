@@ -757,3 +757,141 @@ public class CryptoOperationException extends RuntimeException {
         this.errorMessage = errorMessage;
     }
 }
+
+
+
+package com.tcs.npci.outward.exception.handler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import com.tcs.npci.outward.constant.AppConstants;
+import com.tcs.npci.outward.exception.BatchProcessingException;
+import com.tcs.npci.outward.exception.CryptoOperationException;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private ResponseEntity> buildErrorResponse(Exception ex, HttpStatus status, String errorCode, String errorMessage) {
+        log.error("{} | {} | {}", errorCode, errorMessage, ex.getMessage(), ex);
+        
+        Map<String, Object> errorResponse = new HashMap<>();
+        errorResponse.put("status", "FAILURE");
+        errorResponse.put("errorCode", errorCode);
+        errorResponse.put("errorMessage", errorMessage != null ? errorMessage : ex.getMessage());
+        errorResponse.put("timestamp", java.time.LocalDateTime.now().toString());
+
+        return ResponseEntity.status(status).body(errorResponse);
+    }
+
+    @ExceptionHandler(BatchProcessingException.class)
+    public ResponseEntity> handleBatchProcessing(BatchProcessingException ex) {
+        return buildErrorResponse(
+                ex, 
+                HttpStatus.BAD_REQUEST, 
+                ex.getErrorCode(),
+                ex.getErrorMessage()
+        );
+    }
+
+    @ExceptionHandler(CryptoOperationException.class)
+    public ResponseEntity> handleCryptoOperation(CryptoOperationException ex) {
+        return buildErrorResponse(
+                ex, 
+                HttpStatus.INTERNAL_SERVER_ERROR, 
+                ex.getErrorCode(),
+                ex.getErrorMessage()
+        );
+    }
+
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity> handleDataAccess(DataAccessException ex) {
+        return buildErrorResponse(
+                ex, 
+                HttpStatus.INTERNAL_SERVER_ERROR, 
+                AppConstants.TECHNICAL_ERROR.getValue(),
+                "A database error occurred during file log update."
+        );
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity> handleGeneric(Exception ex) {
+        return buildErrorResponse(
+                ex, 
+                HttpStatus.INTERNAL_SERVER_ERROR, 
+                AppConstants.TECHNICAL_ERROR.getValue(),
+                "An unexpected system error occurred during outward file processing."
+        );
+    }
+}
+
+
+package com.tcs.npci.outward.service;
+
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import com.tcs.npci.outward.config.properties.DirectoryProperties;
+import com.tcs.npci.outward.exception.BatchProcessingException;
+
+@Service
+public class DirectoryPollingService {
+
+    private static final Logger log = LoggerFactory.getLogger(DirectoryPollingService.class);
+
+    private final DirectoryProperties directoryProperties;
+    private final FileBatchingService fileBatchingService;
+
+    public DirectoryPollingService(DirectoryProperties directoryProperties, FileBatchingService fileBatchingService) {
+        this.directoryProperties = directoryProperties;
+        this.fileBatchingService = fileBatchingService;
+    }
+
+    /**
+     * Polls the source directory at a fixed interval.
+     * Scans subdirectories (e.g., CREATE, AMEND, CANCEL) and hands them off to the batching service.
+     */
+    @Scheduled(fixedDelayString = "${polling.fixed-delay:15000}")
+    public void pollSourceDirectory() {
+        Path sourceDir = Paths.get(directoryProperties.getSource());
+
+        if (!Files.exists(sourceDir) || !Files.isDirectory(sourceDir)) {
+            log.warn("Source directory does not exist or is not a directory: {}", sourceDir);
+            return;
+        }
+
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(sourceDir, Files::isDirectory)) {
+            for (Path subFolder : stream) {
+                log.debug("Scanning folder: {}", subFolder.getFileName());
+                try {
+                    // Hand off to the batching service which will group the 1 XML + 2 Images (TIF/JPG) logic
+                    fileBatchingService.processDirectory(subFolder);
+                } catch (BatchProcessingException e) {
+                    log.error("Batch processing failed for folder {}: {}", subFolder.getFileName(), e.getMessage());
+                } catch (Exception e) {
+                    log.error("Unexpected error processing folder {}: {}", subFolder.getFileName(), e.getMessage(), e);
+                }
+            }
+        } catch (IOException e) {
+            log.error("Error accessing source directory: {}", sourceDir, e);
+        }
+    }
+}
