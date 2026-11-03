@@ -1816,3 +1816,96 @@ public class AesEncryptionUtility {
         }
     }
 }
+
+
+
+package com.tcs.npci.outward.exception.handler;
+
+import java.lang.reflect.Method;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
+import org.springframework.stereotype.Component;
+
+import com.tcs.npci.outward.exception.BatchProcessingException;
+import com.tcs.npci.outward.exception.CryptoOperationException;
+import com.tcs.npci.outward.util.ErrorLogger;
+
+@Component
+public class AsyncExceptionHandler implements AsyncUncaughtExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(AsyncExceptionHandler.class);
+
+    @Override
+    public void handleUncaughtException(Throwable ex, Method method, Object... params) {
+        
+        if (ex instanceof BatchProcessingException batchEx) {
+            log.error("Batch Processing Failure | Code: {} | Message: {}", 
+                    batchEx.getErrorCode(), batchEx.getErrorMessage());
+        } 
+        else if (ex instanceof CryptoOperationException cryptoEx) {
+            log.error("Crypto Operation Failure | Code: {} | Message: {}", 
+                    cryptoEx.getErrorCode(), cryptoEx.getErrorMessage());
+        } 
+        else if (ex instanceof Exception genericEx) {
+            ErrorLogger.log(log, "Unhandled exception in background thread execution", genericEx);
+        } else {
+            log.error("Critical system error in async thread: {}", ex.getMessage(), ex);
+        }
+    }
+}
+
+
+
+package com.tcs.npci.outward.util;
+
+import org.slf4j.Logger;
+import org.springframework.stereotype.Component;
+
+@Component
+public final class ErrorLogger {
+
+    static String currentPackage = ErrorLogger.class.getPackage().getName();
+    static int lastDotIndex = currentPackage.lastIndexOf('.');
+    private static final String APP_BASE_PACKAGE = currentPackage.substring(0, lastDotIndex);
+
+    private ErrorLogger() {
+    }
+
+    public static void log(Logger log, Exception e) {
+        if (e == null) {
+            log.error("{} | Unknown error (exception was null)");
+            return;
+        }
+
+        StackTraceElement origin = findApplicationTrace(e);
+        log.error("{} in {}.{}({}:{}) | {}", e.getClass().getSimpleName(), origin.getClassName(),
+                origin.getMethodName(), origin.getFileName(), origin.getLineNumber(), safeMessage(e));
+    }
+
+    public static void log(Logger log, String message, Exception e) {
+        if (e == null) {
+            log.error("{} | Unknown error (exception was null)", message);
+            return;
+        }
+
+        StackTraceElement origin = findApplicationTrace(e);
+        log.error("{} | {} in {}.{}({}:{}) | {}", message, e.getClass().getSimpleName(), origin.getClassName(),
+                origin.getMethodName(), origin.getFileName(), origin.getLineNumber(), safeMessage(e));
+    }
+
+    private static StackTraceElement findApplicationTrace(Exception e) {
+        for (StackTraceElement element : e.getStackTrace()) {
+            if (element.getClassName().startsWith(APP_BASE_PACKAGE)) {
+                return element;
+            }
+        }
+        return e.getStackTrace().length > 0 ? e.getStackTrace()[0]
+                : new StackTraceElement("UnknownClass", "UnknownMethod", "UnknownFile", -1);
+    }
+
+    private static String safeMessage(Exception e) {
+        return (e.getMessage() == null || e.getMessage().isBlank()) ? "(no message)" : e.getMessage();
+    }
+}
