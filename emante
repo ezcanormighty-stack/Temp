@@ -1,0 +1,5697 @@
+package com.tcs.aadesh;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@EnableScheduling
+@ConfigurationPropertiesScan
+@SpringBootApplication
+public class EMandateApplication {
+	private static Logger log = LoggerFactory.getLogger(EMandateApplication.class);
+
+	public static void main(String[] args) {
+		try {
+			SpringApplication.run(EMandateApplication.class, args);
+		} catch (Exception e) {
+			log.error("Application failed to start", e);
+		}
+	}
+}
+
+
+
+
+package com.tcs.aadesh.annotation;
+
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target(value = { ElementType.METHOD })
+@Retention(value = RetentionPolicy.RUNTIME)
+@Documented
+public @interface TxnInfo {
+	String txnNo();
+
+	String txnName();
+}
+
+
+
+
+package com.tcs.aadesh.cache;
+
+import java.util.HashMap;
+import java.util.Map;
+
+//import javax.annotation.PostConstruct;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.entity.ErrorCode;
+import com.tcs.aadesh.repository.ErrorCodeRepository;
+
+import jakarta.annotation.PostConstruct;
+
+@Service
+public class ErrorCodeCacheService {
+	private static Logger logger = LoggerFactory.getLogger(ErrorCodeCacheService.class);
+
+	private final ErrorCodeRepository errorCodeRepository;
+	private final Map<String, String> map = new HashMap<>();
+
+	@Autowired
+	public ErrorCodeCacheService(ErrorCodeRepository errorCodeRepository) {
+		super();
+		this.errorCodeRepository = errorCodeRepository;
+	}
+
+	@PostConstruct
+	public void load() {
+		for (ErrorCode e : errorCodeRepository.findAll()) {
+			map.put(e.getErrorId(), e.getErrorDescription());
+		}
+		logger.info("ErrorCodeCache loaded successfully.");
+
+	}
+
+	public String getDescription(String code) {
+		return map.getOrDefault(code, "Unknown error");
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.cache;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.entity.Product1Card;
+import com.tcs.aadesh.entity.SponsorAllowCard;
+import com.tcs.aadesh.repository.Amount1CardRepo;
+import com.tcs.aadesh.repository.BounceCountCardRepo;
+import com.tcs.aadesh.repository.Product1CardRepo;
+import com.tcs.aadesh.repository.SponserAllowCardRepo;
+import com.tcs.aadesh.repository.TredsLimitCardRepo;
+
+import jakarta.annotation.PostConstruct;
+
+@Service
+public class ValidationCacheService {
+	private static Logger logger = LoggerFactory.getLogger(ValidationCacheService.class);
+
+	private final BounceCountCardRepo bounceCountCardRepo;
+	private final Amount1CardRepo amount1CardRepo;
+	private final Product1CardRepo product1CardRepo;
+	private final SponserAllowCardRepo sponserAllowCardRepo;
+	private final TredsLimitCardRepo tredsLimitCardRepo;
+
+	private volatile String dishonourCounter;
+	private volatile String amount1CardAmount;
+	private volatile String tredsLimitStr;
+	private volatile Set<String> product1CardValues;
+	private volatile Set<SponsorAllowCard> sponsorAllowCards;
+
+	@Autowired
+	public ValidationCacheService(BounceCountCardRepo bounceCountCardRepo, Amount1CardRepo amount1CardRepo,
+			Product1CardRepo product1CardRepo, SponserAllowCardRepo sponserAllowCardRepo,
+			TredsLimitCardRepo tredsLimitCardRepo) {
+		super();
+		this.bounceCountCardRepo = bounceCountCardRepo;
+		this.amount1CardRepo = amount1CardRepo;
+		this.product1CardRepo = product1CardRepo;
+		this.sponserAllowCardRepo = sponserAllowCardRepo;
+		this.tredsLimitCardRepo = tredsLimitCardRepo;
+	}
+
+	@PostConstruct
+	public void loadValidationCache() {
+		refreshCache();
+	}
+
+	@Scheduled(cron = "0 30 2 * * *")
+	private void refreshCache() {
+
+		dishonourCounter = bounceCountCardRepo.findDishonourCounter();
+
+		amount1CardAmount = amount1CardRepo.findMandateAmount();
+
+		tredsLimitStr = tredsLimitCardRepo.findTredsLimit();
+
+		product1CardValues = product1CardRepo.findAll().stream().map(Product1Card::getAcctTypeIntCat)
+				.collect(Collectors.toCollection(HashSet::new));
+
+		sponsorAllowCards = new HashSet<>(sponserAllowCardRepo.findAll());
+
+		logger.info("DishonourCounter, AcctTypeIntCats, TredsLimit & SponsorAllowCards cache refreshed successfully.");
+	}
+
+	public String getDishonourCounter() {
+		return dishonourCounter;
+	}
+
+	public String getAmount1CardAmount() {
+		return amount1CardAmount;
+	}
+
+	public String getTredsLimitStr() {
+		return tredsLimitStr;
+	}
+
+	public Set<String> getProduct1CardValues() {
+		return product1CardValues;
+	}
+
+	public Set<SponsorAllowCard> getSponsorAllowCards() {
+		return sponsorAllowCards;
+	}
+}
+
+
+
+package com.tcs.aadesh.config;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class ExecutorConfig {
+
+	@Bean(destroyMethod = "shutdown")
+	public ExecutorService validationExecutor() {
+		return Executors.newFixedThreadPool(2);
+	}
+}
+
+
+
+package com.tcs.aadesh.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
+import org.springframework.boot.ssl.SslBundles;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
+
+@Configuration
+public class RestClientConfig {
+
+	@Value("${http.client.max-total-connections}")
+	private int maxTotalConnections;
+
+	@Value("${http.client.max-per-route-connections}")
+	private int maxPerRouteConnections;
+
+	@Bean
+	public RestClient restClient(RestClient.Builder restClientBuilder, SslBundles sslBundles) {
+
+		var requestFactoryBuilder = ClientHttpRequestFactoryBuilder.httpComponents()
+				.withConnectionManagerCustomizer(connectionManager -> {
+					connectionManager.setMaxConnTotal(maxTotalConnections)
+							.setMaxConnPerRoute(maxPerRouteConnections);
+				});
+
+		var httpClientSettings = HttpClientSettings.ofSslBundle(sslBundles.getBundle("myclient"));
+
+		var requestFactory = requestFactoryBuilder.build(httpClientSettings);
+
+		return restClientBuilder.requestFactory(requestFactory).build();
+	}
+}
+
+
+
+package com.tcs.aadesh.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import com.tcs.aadesh.interceptor.RequestHeaderValidationInterceptor;
+import com.tcs.aadesh.interceptor.TransactionInfoInterceptor;
+
+@Configuration
+public class WevMvcConfig implements WebMvcConfigurer {
+
+	private final TransactionInfoInterceptor transactionInfoInterceptor;
+	private final RequestHeaderValidationInterceptor headerValidationInterceptor;
+
+	public WevMvcConfig(TransactionInfoInterceptor transactionInfoInterceptor,
+			RequestHeaderValidationInterceptor headerValidationInterceptor) {
+		super();
+		this.transactionInfoInterceptor = transactionInfoInterceptor;
+		this.headerValidationInterceptor = headerValidationInterceptor;
+	}
+
+	@Override
+	public void addInterceptors(InterceptorRegistry registry) {
+		
+		registry.addInterceptor(transactionInfoInterceptor).addPathPatterns("/**");
+		
+		registry.addInterceptor(headerValidationInterceptor).addPathPatterns("/**");
+		
+	}
+}
+
+
+
+
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "crypto", ignoreUnknownFields = false)
+public class CryptoProperties {
+
+	@Valid
+	@NotNull
+	private Keystore keystore = new Keystore();
+
+	@Valid
+	@NotNull
+	private Truststore truststore = new Truststore();
+
+	public Keystore getKeystore() {
+		return keystore;
+	}
+
+	public Truststore getTruststore() {
+		return truststore;
+	}
+
+	public static class Keystore {
+		@NotBlank(message = "'crypto.keystore.path' must be set and cannot be empty")
+		private String path;
+
+		@NotBlank(message = "'crypto.keystore.paswad' must be set and cannot be empty")
+		private String paswad;
+
+		@NotBlank(message = "'crypto.keystore.alias' must be set and cannot be empty")
+		private String alias;
+
+		public String getPath() {
+			return path;
+		}
+
+		public String getPaswad() {
+			return paswad;
+		}
+
+		public String getAlias() {
+			return alias;
+		}
+
+		public void setPath(String path) {
+			this.path = path;
+		}
+
+		public void setPaswad(String paswad) {
+			this.paswad = paswad;
+		}
+
+		public void setAlias(String alias) {
+			this.alias = alias;
+		}
+	}
+
+	public static class Truststore {
+		@NotBlank(message = "'crypto.truststore.path' must be set and cannot be empty")
+		private String path;
+
+		@NotBlank(message = "'crypto.truststore.paswad' must be set and cannot be empty")
+		private String paswad;
+
+		@NotBlank(message = "'crypto.truststore.alias' must be set and cannot be empty")
+		private String alias;
+
+		public String getPath() {
+			return path;
+		}
+
+		public String getPaswad() {
+			return paswad;
+		}
+
+		public String getAlias() {
+			return alias;
+		}
+
+		public void setPath(String path) {
+			this.path = path;
+		}
+
+		public void setPaswad(String paswad) {
+			this.paswad = paswad;
+		}
+
+		public void setAlias(String alias) {
+			this.alias = alias;
+		}
+	}
+}
+
+
+
+package com.tcs.aadesh.config.properties;
+
+import java.util.Map;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.PropertySource;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotEmpty;
+
+@Component
+@Validated
+@PropertySource("file:${spring.config.location}/field_error.properties")
+@ConfigurationProperties(prefix = "validation")
+public class FieldErrorCodeProperties {
+
+	@NotEmpty(message = "'validation.field-error' property is missing or empty. Ensure 'field_error.properties' contains entries like 'validation.field-error.xyz=...'")
+	private Map<String, String> fieldError;
+
+	public Map<String, String> getFieldError() {
+		return fieldError;
+	}
+
+	public void setFieldError(Map<String, String> fieldError) {
+		this.fieldError = fieldError;
+	}
+
+	public String getCode(String field) {
+		return fieldError.getOrDefault(field, "AD003");
+	}
+
+	@Override
+	public String toString() {
+		return "RequestFieldProperties [fieldCodes=" + fieldError + "]";
+	}
+}
+
+
+
+
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+import jakarta.validation.constraints.NotEmpty;
+
+@Component
+@ConfigurationProperties(prefix = "server.servlet")
+@Validated
+public class ServletProperties {
+
+	@NotEmpty(message = "'server.servlet.context-path' must be set and cannot be empty")
+	private String contextPath;
+
+	public String getContextPath() {
+		return contextPath;
+	}
+
+	public void setContextPath(String contextPath) {
+		this.contextPath = contextPath;
+	}
+}
+
+
+
+package com.tcs.aadesh.constant;
+
+public enum AppConstants {
+	INST_NO("003"),
+	TECHNICAL_ERROR("AD002");
+
+	private final String value;
+
+	private AppConstants(String value) {
+		this.value = value;
+	}
+
+	public String getValue() {
+		return value;
+	}
+}
+
+
+
+
+package com.tcs.aadesh.constant;
+
+public enum MandateOperation {
+	CREATE("00", "C"), 
+	CANCEL("01", "D"), 
+	AMEND("02", "A"), 
+	REVOKE("02", "R"),
+	STOP("03", "S");
+
+	private final String umrnStatus;
+	private final String tranType;
+
+	MandateOperation(String umrnStatus, String tranType) {
+		this.umrnStatus = umrnStatus;
+		this.tranType = tranType;
+	}
+
+	public String getUmrnStatus() {
+		return umrnStatus;
+	}
+
+	public String getTranType() {
+		return tranType;
+	}
+}
+
+
+
+package com.tcs.aadesh.constant;
+
+public final class RequestConstants {
+
+    private RequestConstants() {
+        throw new UnsupportedOperationException("Constants class - do not instantiate");
+    }
+
+    // HTTP Headers
+    public static final class Headers {
+        public static final String REQ_REF_NO   	   = "X-Request-Reference-No";
+        public static final String SOURCE_ID           = "X-Source-Id";
+        public static final String TXN_NO              = "X-Internal-Txn-No";
+        public static final String TXN_NAME            = "X-Internal-Txn-Name";
+        public static final String SIGNATURE           = "X-Signature";
+        public static final String RESPONSE_ENC_STATUS = "X-Response-Encryption-Status";
+
+        private Headers() {}
+    }
+
+    // Response Encryption Status Values
+    public static final class ResponseEncryptionStatus {
+        public static final String ENCRYPTED = "ENCRYPTED";
+        public static final String FAILED    = "FAILED";
+
+        private ResponseEncryptionStatus() {}
+    }
+
+    // Request Attributes (stored in server context)
+    public static final class RequestAttributes {
+        public static final String ENCRYPTED_REQUEST  = "crypto.encryptedRequest";
+        public static final String DECRYPTED_REQUEST  = "crypto.decryptedRequest";
+
+        private RequestAttributes() {}
+    }
+}   
+
+
+
+
+package com.tcs.aadesh.constant;
+
+public enum ResponseStatus {
+	SUCCESS("0"), 
+	FAILURE("1");
+
+	private final String status;
+
+	private ResponseStatus(String status) {
+		this.status = status;
+	}
+
+	public String getStatus() {
+		return status;
+	}
+}
+
+
+
+
+
+package com.tcs.aadesh.context;
+
+public record AuditContext(
+		String txnNo,
+		String txnName,
+		String responseStatus,
+		String requestReferenceNo,
+		String sourceId,
+		String tellerNo,
+		String umrnNo,
+		String requestBody,
+		String responseBody,
+		String errorCode,
+		String errorDescription,
+		String clientIp,
+		String requestUri,
+		String httpMethod,
+		int httpStatusCode
+) {}
+
+
+
+
+package com.tcs.aadesh.context;
+
+public class ErrorContext {
+
+	private String responseStatus;
+	private String errorCode;
+	private String errorDescription;
+
+	public static ErrorContext of(String errorCode, String errorDescription) {
+		ErrorContext context = new ErrorContext();
+		context.responseStatus = "1";
+		context.errorCode = errorCode;
+		context.errorDescription = errorDescription;
+		return context;
+	}
+
+	public String getResponseStatus() {
+		return responseStatus;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public String getErrorDescription() {
+		return errorDescription;
+	}
+
+	@Override
+	public String toString() {
+		return "ErrorContext [responseStatus=" + responseStatus + ", errorCode=" + errorCode + ", errorDescription="
+				+ errorDescription + "]";
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.context;
+
+public class ErrorContextHolder {
+	private static final ThreadLocal<ErrorContext> holder = new ThreadLocal<>();
+
+	public static void set(ErrorContext context) {
+		holder.set(context);
+	}
+
+	public static ErrorContext get() {
+		return holder.get();
+	}
+
+	public static void clear() {
+		holder.remove();
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.controller;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.tcs.aadesh.annotation.TxnInfo;
+import com.tcs.aadesh.dto.request.AmendMandateRequestDTO;
+import com.tcs.aadesh.dto.request.CancelMandateRequestDTO;
+import com.tcs.aadesh.dto.request.CreateMandateRequestDTO;
+import com.tcs.aadesh.dto.request.RevokeMandateRequestDTO;
+import com.tcs.aadesh.dto.request.StopMandateRequestDTO;
+import com.tcs.aadesh.service.MandateService;
+
+import io.swagger.v3.oas.annotations.Operation;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+
+@RestController
+public class MandateController {
+	
+	private final MandateService mandateService;
+
+	@Autowired
+	public MandateController(MandateService mandateService) {
+		super();
+		this.mandateService = mandateService;
+	}
+
+	@Operation(summary = "Create mandate")
+	@TxnInfo(txnNo = "36701", txnName = "E-Mandate Creation")
+	@PostMapping(value = "/create", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> createMandate(@Valid @RequestBody(required = true) CreateMandateRequestDTO request,
+			HttpServletRequest httpRequest) {
+
+		return ResponseEntity.ok(mandateService.createMandate(request, httpRequest));
+	}
+
+	@Operation(summary = "Amend mandate")
+	@TxnInfo(txnNo = "36701", txnName = "E-Mandate Amendment")
+	@PostMapping(value = "/amend", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> amendMandate(@Valid @RequestBody(required = true) AmendMandateRequestDTO request,
+			HttpServletRequest httpRequest) {
+
+		return ResponseEntity.ok(mandateService.amendMandate(request, httpRequest));
+	}
+
+	@Operation(summary = "Cancel mandate")
+	@TxnInfo(txnNo = "36701", txnName = "E-Mandate Cancellation")
+	@PostMapping(value = "/cancel", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> cancelMandate(@Valid @RequestBody(required = true) CancelMandateRequestDTO request,
+			HttpServletRequest httpRequest) {
+
+		return ResponseEntity.ok(mandateService.cancelMandate(request, httpRequest));
+	}
+
+	@Operation(summary = "Stop mandate")
+	@TxnInfo(txnNo = "36701", txnName = "E-Mandate Stop")
+	@PostMapping(value = "/stop", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> stopMandate(@Valid @RequestBody(required = true) StopMandateRequestDTO request,
+			HttpServletRequest httpRequest) {
+
+		return ResponseEntity.ok(mandateService.stopMandate(request, httpRequest));
+	}
+
+	@Operation(summary = "Revoke mandate")
+	@TxnInfo(txnNo = "36701", txnName = "E-Mandate Revoke")
+	@PostMapping(value = "/revoke", produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> revokeMandate(@Valid @RequestBody(required = true) RevokeMandateRequestDTO request,
+			HttpServletRequest httpRequest) {
+
+		return ResponseEntity.ok(mandateService.revokeMandate(request, httpRequest));
+	}
+}
+
+
+
+
+package com.tcs.aadesh.dto;
+
+import com.tcs.aadesh.dto.request.EisMicroRequest;
+
+public class EncryptedEisMicroPayload {
+
+	EisMicroRequest eisMicroRequest;
+	String aesKey;
+
+	public EncryptedEisMicroPayload() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public EncryptedEisMicroPayload(EisMicroRequest eisMicroRequest, String aesKey) {
+		super();
+		this.eisMicroRequest = eisMicroRequest;
+		this.aesKey = aesKey;
+	}
+
+	public EisMicroRequest getEisMicroRequest() {
+		return eisMicroRequest;
+	}
+
+	public void setEisMicroRequest(EisMicroRequest eisMicroRequest) {
+		this.eisMicroRequest = eisMicroRequest;
+	}
+
+	public String getAesKey() {
+		return aesKey;
+	}
+
+	public void setAesKey(String aesKey) {
+		this.aesKey = aesKey;
+	}
+
+	@Override
+	public String toString() {
+		return "EisMicroPayload [eisMicroRequest=" + eisMicroRequest + ", aesKey=" + aesKey + "]";
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.dto;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonPropertyOrder({"errorCode", "errorDescription", "errorMessage"})
+public class ErrorInfo {
+
+    private String errorCode;
+    private String errorDescription;
+    private String errorMessage;
+
+    private ErrorInfo() {}
+
+    public static ErrorInfo of(String errorCode, String errorDescription) {
+        ErrorInfo errorInfo = new ErrorInfo();
+        errorInfo.errorCode  = errorCode;
+        errorInfo.errorDescription = errorDescription;
+        return errorInfo;
+    }
+
+    public static ErrorInfo of(String errorCode,
+                               String errorDescription,
+                               String errorMessage) {
+        ErrorInfo errorInfo = of(errorCode, errorDescription);
+        errorInfo.errorMessage = errorMessage;
+        return errorInfo;
+    }
+
+    public String getErrorCode()   { return errorCode; }
+    public String getErrorDescription()  { return errorDescription; }
+    public String getErrorMessage() { return errorMessage; }
+
+	@Override
+	public String toString() {
+		return "ErrorInfo [errorCode=" + errorCode + ", errorDescription=" + errorDescription + ", errorMessage="
+				+ errorMessage + "]";
+	}
+    
+    
+}
+
+
+
+
+package com.tcs.aadesh.dto.request;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+public class AmendMandateRequestDTO extends BaseRequest {
+
+	@JsonProperty("TRAN-TYPE")
+	@NotBlank(message = "TRAN-TYPE is required")
+	@Pattern(regexp = "^A$", message = "TRAN-TYPE must be A")
+	private String tranType;
+
+	@JsonProperty("UNIQREFNO")
+	@Size(max = 35, message = "UNIQREFNO must not exceed 35 characters")
+	private String unqeRefNo;
+
+	@JsonProperty("UMRN")
+	@NotBlank(message = "UMRN is required")
+	@Size(max = 35, message = "UMRN must not exceed 35 characters")
+	private String umrn;
+
+	@JsonProperty("DCA-INDTFR")
+	@Size(max = 35, message = "DCA-INDTFR must not exceed 35 characters")
+	private String dcaIndtfr;
+
+	@JsonProperty("SPON-CODE")
+	@Size(max = 11, message = "SPON-CODE must not exceed 11 characters")
+	private String sponCode;
+
+	@JsonProperty("DRAW-CODE")
+	@Size(max = 11, message = "DRAW-CODE must not exceed 11 characters")
+	private String drawCode;
+
+	@JsonProperty("AMND-RESN")
+	@NotBlank(message = "AMND-RESN is required")
+	@Size(max = 35, message = "AMND-RESN must not exceed 35 characters")
+	private String amndReason;
+
+	@JsonProperty("CANCL-RESN")
+	@Size(max = 4, message = "CANCL-RESN must not exceed 4 characters")
+	private String cnclReason;
+
+	@JsonProperty("CATE-CODE")
+	@NotBlank(message = "CATE-CODE is required")
+	@Size(max = 4, message = "CATE-CODE must not exceed 4 characters")
+	private String cateCode;
+
+	@JsonProperty("PROPRTRY")
+	@Size(max = 35, message = "PROPRTRY must not exceed 35 characters")
+	private String proprietry;
+
+	@JsonProperty("FREQUENCY1")
+	@NotBlank(message = "FREQUENCY1 is required")
+	@Size(max = 4, message = "FREQUENCY1 must not exceed 4 characters")
+	@Pattern(regexp = "^(RCUR|OOFF)$", message = "FREQUENCY1 must be RCUR or OOFF")
+	private String frequency1;
+
+	@JsonProperty("FREQUENCY2")
+//	@NotBlank(message = "FREQUENCY2 is required")
+	@Size(max = 4, message = "FREQUENCY2 must not exceed 4 characters")
+	private String frequency2;
+
+	@JsonProperty("START-DATE")
+	@NotNull(message = "START-DATE is required")
+	@JsonFormat(pattern = "yyyy-MM-dd")
+	private LocalDate startDate;
+
+	@JsonProperty("END-DATE")
+	@NotNull(message = "END-DATE is required")
+	@JsonFormat(pattern = "yyyy-MM-dd")
+	private LocalDate endDate;
+
+	@JsonProperty("AMOUNT")
+	@NotNull(message = "AMOUNT is required")
+	@DecimalMin(value = "0.01", message = "AMOUNT must be greater than zero")
+	private BigDecimal amount;
+
+	@JsonProperty("SERVICE-PROVIDER")
+	@Size(max = 140, message = "SERVICE-PROVIDER must not exceed 140 characters")
+	private String serviceProvider;
+
+	@JsonProperty("UTILITY-CODE")
+	@NotBlank(message = "UTILITY-CODE is required")
+	@Size(max = 35, message = "UTILITY-CODE must not exceed 35 characters")
+	private String utilityCode;
+
+	@JsonProperty("CUSTOMER-NAME")
+	@Size(max = 140, message = "CUSTOMER-NAME must not exceed 140 characters")
+	private String customerName;
+
+	@JsonProperty("CONS-REF-NO")
+	@Size(max = 35, message = "CONS-REF-NO must not exceed 35 characters")
+	private String consumerRefNo;
+
+	@JsonProperty("SCHEME-REF-NO")
+	@Size(max = 35, message = "SCHEME-REF-NO must not exceed 35 characters")
+	private String schemeRefNo;
+
+	@JsonProperty("LANDLINE-NO")
+	@Size(max = 35, message = "LANDLINE-NO must not exceed 35 characters")
+	private String landlineNo;
+
+	@JsonProperty("MOBILE-NO")
+	@Size(max = 35, message = "MOBILE-NO must not exceed 35 characters")
+	private String mobileNo;
+
+	@JsonProperty("EMAIL-ID")
+	@NotBlank(message = "EMAIL-ID is required")
+	@Email(message = "EMAIL-ID must be valid")
+	@Size(max = 50, message = "EMAIL-ID must not exceed 50 characters")
+	private String emailId;
+
+	@JsonProperty("CUST-ADD-INFO")
+	@Size(max = 35, message = "CUST-ADD-INFO must not exceed 35 characters")
+	private String customerAddId;
+
+	@JsonProperty("ACCT-NO")
+	@Size(max = 35, message = "ACCT-NO must not exceed 35 characters")
+	private String acctNo;
+
+	@JsonProperty("ACCT-TYPE")
+	@Size(max = 35, message = "ACCT-TYPE must not exceed 35 characters")
+	private String acctType;
+
+	@JsonProperty("FILE-DATE")
+	@JsonFormat(pattern = "yyyy-MM-dd")
+	private LocalDate fileDate;
+
+	@JsonProperty("DEBIT-TYPE")
+	@Pattern(regexp = "^[FM]$", message = "DEBIT-TYPE must be F or M")
+	private String debitType;
+
+	@JsonProperty("TXN-BRANCH-CODE")
+	@NotBlank(message = "TXN-BRANCH-CODE is required")
+	@Size(max = 5, message = "TXN-BRANCH-CODE must not exceed 5 characters")
+	private String txnBranchCode;
+
+	public AmendMandateRequestDTO() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public AmendMandateRequestDTO(
+			@NotBlank(message = "TRAN-TYPE is required") @Pattern(regexp = "^A$", message = "TRAN-TYPE must be A") String tranType,
+			@Size(max = 35, message = "UNIQREFNO must not exceed 35 characters") String unqeRefNo,
+			@NotBlank(message = "UMRN is required") @Size(max = 35, message = "UMRN must not exceed 35 characters") String umrn,
+			@Size(max = 35, message = "DCA-INDTFR must not exceed 35 characters") String dcaIndtfr,
+			@Size(max = 11, message = "SPON-CODE must not exceed 11 characters") String sponCode,
+			@Size(max = 11, message = "DRAW-CODE must not exceed 11 characters") String drawCode,
+			@NotBlank(message = "AMND-RESN is required") @Size(max = 35, message = "AMND-RESN must not exceed 35 characters") String amndReason,
+			@Size(max = 4, message = "CANCL-RESN must not exceed 4 characters") String cnclReason,
+			@NotBlank(message = "CATE-CODE is required") @Size(max = 4, message = "CATE-CODE must not exceed 4 characters") String cateCode,
+			@Size(max = 35, message = "PROPRTRY must not exceed 35 characters") String proprietry,
+			@NotBlank(message = "FREQUENCY1 is required") @Size(max = 4, message = "FREQUENCY1 must not exceed 4 characters") @Pattern(regexp = "^(RCUR|OOFF)$", message = "FREQUENCY1 must be RCUR or OOFF") String frequency1,
+			@Size(max = 4, message = "FREQUENCY2 must not exceed 4 characters") String frequency2,
+			@NotNull(message = "START-DATE is required") LocalDate startDate,
+			@NotNull(message = "END-DATE is required") LocalDate endDate,
+			@NotNull(message = "AMOUNT is required") @DecimalMin(value = "0.01", message = "AMOUNT must be greater than zero") BigDecimal amount,
+			@Size(max = 140, message = "SERVICE-PROVIDER must not exceed 140 characters") String serviceProvider,
+			@NotBlank(message = "UTILITY-CODE is required") @Size(max = 35, message = "UTILITY-CODE must not exceed 35 characters") String utilityCode,
+			@Size(max = 140, message = "CUSTOMER-NAME must not exceed 140 characters") String customerName,
+			@Size(max = 35, message = "CONS-REF-NO must not exceed 35 characters") String consumerRefNo,
+			@Size(max = 35, message = "SCHEME-REF-NO must not exceed 35 characters") String schemeRefNo,
+			@Size(max = 35, message = "LANDLINE-NO must not exceed 35 characters") String landlineNo,
+			@Size(max = 35, message = "MOBILE-NO must not exceed 35 characters") String mobileNo,
+			@NotBlank(message = "EMAIL-ID is required") @Email(message = "EMAIL-ID must be valid") @Size(max = 50, message = "EMAIL-ID must not exceed 50 characters") String emailId,
+			@Size(max = 35, message = "CUST-ADD-INFO must not exceed 35 characters") String customerAddId,
+			@Size(max = 35, message = "ACCT-NO must not exceed 35 characters") String acctNo,
+			@Size(max = 35, message = "ACCT-TYPE must not exceed 35 characters") String acctType, LocalDate fileDate,
+			@Pattern(regexp = "^[FM]$", message = "DEBIT-TYPE must be F or M") String debitType,
+			@NotBlank(message = "TXN-BRANCH-CODE is required") @Size(max = 5, message = "TXN-BRANCH-CODE must not exceed 5 characters") String txnBranchCode) {
+		super();
+		this.tranType = tranType;
+		this.unqeRefNo = unqeRefNo;
+		this.umrn = umrn;
+		this.dcaIndtfr = dcaIndtfr;
+		this.sponCode = sponCode;
+		this.drawCode = drawCode;
+		this.amndReason = amndReason;
+		this.cnclReason = cnclReason;
+		this.cateCode = cateCode;
+		this.proprietry = proprietry;
+		this.frequency1 = frequency1;
+		this.frequency2 = frequency2;
+		this.startDate = startDate;
+		this.endDate = endDate;
+		this.amount = amount;
+		this.serviceProvider = serviceProvider;
+		this.utilityCode = utilityCode;
+		this.customerName = customerName;
+		this.consumerRefNo = consumerRefNo;
+		this.schemeRefNo = schemeRefNo;
+		this.landlineNo = landlineNo;
+		this.mobileNo = mobileNo;
+		this.emailId = emailId;
+		this.customerAddId = customerAddId;
+		this.acctNo = acctNo;
+		this.acctType = acctType;
+		this.fileDate = fileDate;
+		this.debitType = debitType;
+		this.txnBranchCode = txnBranchCode;
+	}
+
+	public String getTranType() {
+		return tranType;
+	}
+
+	public void setTranType(String tranType) {
+		this.tranType = tranType;
+	}
+
+	public String getUnqeRefNo() {
+		return unqeRefNo;
+	}
+
+	public void setUnqeRefNo(String unqeRefNo) {
+		this.unqeRefNo = unqeRefNo;
+	}
+
+	public String getUmrn() {
+		return umrn;
+	}
+
+	public void setUmrn(String umrn) {
+		this.umrn = umrn;
+	}
+
+	public String getDcaIndtfr() {
+		return dcaIndtfr;
+	}
+
+	public void setDcaIndtfr(String dcaIndtfr) {
+		this.dcaIndtfr = dcaIndtfr;
+	}
+
+	public String getSponCode() {
+		return sponCode;
+	}
+
+	public void setSponCode(String sponCode) {
+		this.sponCode = sponCode;
+	}
+
+	public String getDrawCode() {
+		return drawCode;
+	}
+
+	public void setDrawCode(String drawCode) {
+		this.drawCode = drawCode;
+	}
+
+	public String getAmndReason() {
+		return amndReason;
+	}
+
+	public void setAmndReason(String amndReason) {
+		this.amndReason = amndReason;
+	}
+
+	public String getCnclReason() {
+		return cnclReason;
+	}
+
+	public void setCnclReason(String cnclReason) {
+		this.cnclReason = cnclReason;
+	}
+
+	public String getCateCode() {
+		return cateCode;
+	}
+
+	public void setCateCode(String cateCode) {
+		this.cateCode = cateCode;
+	}
+
+	public String getProprietry() {
+		return proprietry;
+	}
+
+	public void setProprietry(String proprietry) {
+		this.proprietry = proprietry;
+	}
+
+	public String getFrequency1() {
+		return frequency1;
+	}
+
+	public void setFrequency1(String frequency1) {
+		this.frequency1 = frequency1;
+	}
+
+	public String getFrequency2() {
+		return frequency2;
+	}
+
+	public void setFrequency2(String frequency2) {
+		this.frequency2 = frequency2;
+	}
+
+	public LocalDate getStartDate() {
+		return startDate;
+	}
+
+	public void setStartDate(LocalDate startDate) {
+		this.startDate = startDate;
+	}
+
+	public LocalDate getEndDate() {
+		return endDate;
+	}
+
+	public void setEndDate(LocalDate endDate) {
+		this.endDate = endDate;
+	}
+
+	public BigDecimal getAmount() {
+		return amount;
+	}
+
+	public void setAmount(BigDecimal amount) {
+		this.amount = amount;
+	}
+
+	public String getServiceProvider() {
+		return serviceProvider;
+	}
+
+	public void setServiceProvider(String serviceProvider) {
+		this.serviceProvider = serviceProvider;
+	}
+
+	public String getUtilityCode() {
+		return utilityCode;
+	}
+
+	public void setUtilityCode(String utilityCode) {
+		this.utilityCode = utilityCode;
+	}
+
+	public String getCustomerName() {
+		return customerName;
+	}
+
+	public void setCustomerName(String customerName) {
+		this.customerName = customerName;
+	}
+
+	public String getConsumerRefNo() {
+		return consumerRefNo;
+	}
+
+	public void setConsumerRefNo(String consumerRefNo) {
+		this.consumerRefNo = consumerRefNo;
+	}
+
+	public String getSchemeRefNo() {
+		return schemeRefNo;
+	}
+
+	public void setSchemeRefNo(String schemeRefNo) {
+		this.schemeRefNo = schemeRefNo;
+	}
+
+	public String getLandlineNo() {
+		return landlineNo;
+	}
+
+	public void setLandlineNo(String landlineNo) {
+		this.landlineNo = landlineNo;
+	}
+
+	public String getMobileNo() {
+		return mobileNo;
+	}
+
+	public void setMobileNo(String mobileNo) {
+		this.mobileNo = mobileNo;
+	}
+
+	public String getEmailId() {
+		return emailId;
+	}
+
+	public void setEmailId(String emailId) {
+		this.emailId = emailId;
+	}
+
+	public String getCustomerAddId() {
+		return customerAddId;
+	}
+
+	public void setCustomerAddId(String customerAddId) {
+		this.customerAddId = customerAddId;
+	}
+
+	public String getAcctNo() {
+		return acctNo;
+	}
+
+	public void setAcctNo(String acctNo) {
+		this.acctNo = acctNo;
+	}
+
+	public String getAcctType() {
+		return acctType;
+	}
+
+	public void setAcctType(String acctType) {
+		this.acctType = acctType;
+	}
+
+	public LocalDate getFileDate() {
+		return fileDate;
+	}
+
+	public void setFileDate(LocalDate fileDate) {
+		this.fileDate = fileDate;
+	}
+
+	public String getDebitType() {
+		return debitType;
+	}
+
+	public void setDebitType(String debitType) {
+		this.debitType = debitType;
+	}
+
+	public String getTxnBranchCode() {
+		return txnBranchCode;
+	}
+
+	public void setTxnBranchCode(String txnBranchCode) {
+		this.txnBranchCode = txnBranchCode;
+	}
+
+	@Override
+	public String toString() {
+		return "AmendMandateRequest [tranType=" + tranType + ", unqeRefNo=" + unqeRefNo + ", umrn=" + umrn
+				+ ", dcaIndtfr=" + dcaIndtfr + ", sponCode=" + sponCode + ", drawCode=" + drawCode + ", amndReason="
+				+ amndReason + ", cnclReason=" + cnclReason + ", cateCode=" + cateCode + ", proprietry=" + proprietry
+				+ ", frequency1=" + frequency1 + ", frequency2=" + frequency2 + ", startDate=" + startDate
+				+ ", endDate=" + endDate + ", amount=" + amount + ", serviceProvider=" + serviceProvider
+				+ ", utilityCode=" + utilityCode + ", customerName=" + customerName + ", consumerRefNo=" + consumerRefNo
+				+ ", schemeRefNo=" + schemeRefNo + ", landlineNo=" + landlineNo + ", mobileNo=" + mobileNo
+				+ ", emailId=" + emailId + ", customerAddId=" + customerAddId + ", acctNo=" + acctNo + ", acctType="
+				+ acctType + ", fileDate=" + fileDate + ", debitType=" + debitType + ", txnBranchCode=" + txnBranchCode
+				+ "]";
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.dto.request;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+public class BaseRequest {
+
+//	@JsonProperty(value = "SOURCE_ID")
+//	@NotBlank(message = "SOURCE_ID is required")
+//	@Size(min = 1, max = 5, message = "SOURCE_ID should not exceed 5 characters")
+//	@Pattern(regexp = "[a-zA-Z ]+", message = "SOURCE_ID must contain letters only")
+//	private String sourceId;
+
+	@JsonProperty(value = "TELLER_ID")
+	@NotBlank(message = "TELLER_ID is required")
+	@Size(min = 1, max = 16, message = "TELLER_ID should not exceed 16 characters")
+	@Pattern(regexp = "\\d+", message = "TELLER_ID must contain digits only")
+	private String tellerId;
+
+	public BaseRequest() {
+	}
+
+	public BaseRequest(
+//			@NotBlank(message = "SOURCE_ID is required") @Size(min = 1, max = 5, message = "SOURCE_ID should not exceed 5 characters") @Pattern(regexp = "[a-zA-Z ]+", message = "SOURCE_ID must contain letters only") String sourceId,
+			@NotBlank(message = "TELLER_ID is required") @Pattern(regexp = "\\d+", message = "TELLER_ID must contain digits only") String tellerId) {
+		super();
+//		this.sourceId = sourceId;
+		this.tellerId = tellerId;
+	}
+
+//	public String getSourceId() {
+//		return sourceId;
+//	}
+//
+//	public void setSourceId(String sourceId) {
+//		this.sourceId = sourceId;
+//	}
+
+	public String getTellerId() {
+		return tellerId;
+	}
+
+	public void setTellerId(String tellerId) {
+		this.tellerId = tellerId;
+	}
+
+	@Override
+	public String toString() {
+		return "BaseRequest [tellerId=" + tellerId + "]";
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.dto.request;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+public class CancelMandateRequestDTO extends BaseRequest {
+
+	@JsonProperty("TRAN-TYPE")
+	@NotBlank(message = "TRAN-TYPE is required")
+	@Pattern(regexp = "^D$", message = "TRAN-TYPE must be D")
+	private String tranType;
+
+	@JsonProperty("UMRN")
+	@NotBlank(message = "UMRN is required")
+	@Size(max = 35, message = "UMRN must not exceed 35 characters")
+	private String umrn;
+
+	@JsonProperty("CANCL-RESN")
+	@NotBlank(message = "CANCL-RESN is required")
+	@Size(max = 4, message = "CANCL-RESN must not exceed 4 characters")
+	private String cnclReason;
+
+	public CancelMandateRequestDTO() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public CancelMandateRequestDTO(
+			@NotBlank(message = "TRAN-TYPE is required") @Pattern(regexp = "^D$", message = "TRAN-TYPE must be D") String tranType,
+			@NotBlank(message = "UMRN is required") @Size(max = 35, message = "UMRN must not exceed 35 characters") String umrn,
+			@NotBlank(message = "CANCL-RESN is required") @Size(max = 4, message = "CANCL-RESN must not exceed 4 characters") String cnclReason) {
+		super();
+		this.tranType = tranType;
+		this.umrn = umrn;
+		this.cnclReason = cnclReason;
+	}
+
+	public String getTranType() {
+		return tranType;
+	}
+
+	public void setTranType(String tranType) {
+		this.tranType = tranType;
+	}
+
+	public String getUmrn() {
+		return umrn;
+	}
+
+	public void setUmrn(String umrn) {
+		this.umrn = umrn;
+	}
+
+	public String getCnclReason() {
+		return cnclReason;
+	}
+
+	public void setCnclReason(String cnclReason) {
+		this.cnclReason = cnclReason;
+	}
+
+	@Override
+	public String toString() {
+		return "CancelMandateRequest [tranType=" + tranType + ", umrn=" + umrn + ", cnclReason=" + cnclReason + "]";
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.dto.request;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class EisMicroRequest {
+
+	@JsonProperty("REQUEST_REFERENCE_NUMBER")
+	private String REQUEST_REFERENCE_NUMBER;
+
+	@JsonProperty("REQUEST")
+	private String REQUEST;
+
+	@JsonProperty("DIGI_SIGN")
+	private String DIGI_SIGN;
+
+	public String getREQUEST_REFERENCE_NUMBER() {
+		return REQUEST_REFERENCE_NUMBER;
+	}
+
+	public void setREQUEST_REFERENCE_NUMBER(String rEQUEST_REFERENCE_NUMBER) {
+		this.REQUEST_REFERENCE_NUMBER = rEQUEST_REFERENCE_NUMBER;
+	}
+
+	public String getREQUEST() {
+		return REQUEST;
+	}
+
+	public void setREQUEST(String rEQUEST) {
+		this.REQUEST = rEQUEST;
+	}
+
+	public String getDIGI_SIGN() {
+		return DIGI_SIGN;
+	}
+
+	public void setDIGI_SIGN(String dIGI_SIGN) {
+		this.DIGI_SIGN = dIGI_SIGN;
+	}
+
+	@Override
+	public String toString() {
+		return "EncryptedRequestBean [REQUEST_REFERENCE_NUMBER=" + REQUEST_REFERENCE_NUMBER + ", REQUEST=" + REQUEST
+				+ ", DIGI_SIGN=" + DIGI_SIGN + "]";
+	}
+
+}
+
+
+package com.tcs.aadesh.dto.request;
+
+public class EncryptedPayload {
+
+	private String iv;
+	private String key;
+	private String data;
+
+	public EncryptedPayload() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public EncryptedPayload(String iv, String key, String data) {
+		super();
+		this.iv = iv;
+		this.key = key;
+		this.data = data;
+	}
+
+	public String getIv() {
+		return iv;
+	}
+
+	public void setIv(String iv) {
+		this.iv = iv;
+	}
+
+	public String getKey() {
+		return key;
+	}
+
+	public void setKey(String key) {
+		this.key = key;
+	}
+
+	public String getData() {
+		return data;
+	}
+
+	public void setData(String data) {
+		this.data = data;
+	}
+
+}
+
+
+package com.tcs.aadesh.dto.request;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+public class RevokeMandateRequestDTO extends BaseRequest {
+
+	@JsonProperty("TRAN-TYPE")
+	@NotBlank(message = "TRAN-TYPE is required")
+	@Pattern(regexp = "^R$", message = "TRAN-TYPE must be R")
+	private String tranType;
+
+	@JsonProperty("UMRN")
+	@NotBlank(message = "UMRN is required")
+	@Size(max = 35, message = "UMRN must not exceed 35 characters")
+	private String umrn;
+
+	public RevokeMandateRequestDTO() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public RevokeMandateRequestDTO(
+			@NotBlank(message = "TRAN-TYPE is required") @Pattern(regexp = "^R$", message = "TRAN-TYPE must be R") String tranType,
+			@NotBlank(message = "UMRN is required") @Size(max = 35, message = "UMRN must not exceed 35 characters") String umrn) {
+		super();
+		this.tranType = tranType;
+		this.umrn = umrn;
+	}
+
+	public String getTranType() {
+		return tranType;
+	}
+
+	public void setTranType(String tranType) {
+		this.tranType = tranType;
+	}
+
+	public String getUmrn() {
+		return umrn;
+	}
+
+	public void setUmrn(String umrn) {
+		this.umrn = umrn;
+	}
+
+	@Override
+	public String toString() {
+		return "StopMandateRequest [tranType=" + tranType + ", umrn=" + umrn + "]";
+	}
+
+}
+
+
+
+package com.tcs.aadesh.dto.request;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+public class StopMandateRequestDTO extends BaseRequest {
+
+	@JsonProperty("TRAN-TYPE")
+	@NotBlank(message = "TRAN-TYPE is required")
+	@Pattern(regexp = "^S$", message = "TRAN-TYPE must be S")
+	private String tranType;
+
+	@JsonProperty("UMRN")
+	@NotBlank(message = "UMRN is required")
+	@Size(max = 35, message = "UMRN must not exceed 35 characters")
+	private String umrn;
+
+	public StopMandateRequestDTO() {
+		super();
+	}
+
+	public StopMandateRequestDTO(
+			@NotBlank(message = "TRAN-TYPE is required") @Pattern(regexp = "^S$", message = "TRAN-TYPE must be S") String tranType,
+			@NotBlank(message = "UMRN is required") @Size(max = 35, message = "UMRN must not exceed 35 characters") String umrn) {
+		super();
+		this.tranType = tranType;
+		this.umrn = umrn;
+	}
+
+	public String getTranType() {
+		return tranType;
+	}
+
+	public void setTranType(String tranType) {
+		this.tranType = tranType;
+	}
+
+	public String getUmrn() {
+		return umrn;
+	}
+
+	public void setUmrn(String umrn) {
+		this.umrn = umrn;
+	}
+
+	@Override
+	public String toString() {
+		return "StopMandateRequest [tranType=" + tranType + ", umrn=" + umrn + "]";
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.dto.response;
+
+import java.time.LocalDateTime;
+
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.tcs.aadesh.constant.ResponseStatus;
+import com.tcs.aadesh.dto.ErrorInfo;
+
+//@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonPropertyOrder({ "requestReferenceNo", "status", "sourceId", "timestamp", "data", "error" })
+public class ApiResponse<T> {
+
+	private String requestReferenceNo;
+	private String sourceId;
+	private String status;
+	private T data;
+	private ErrorInfo error;
+	private String timestamp;
+
+	private ApiResponse() {
+	}
+
+	private static <T> ApiResponse<T> base(String requestReferenceNo, String sourceId) {
+		ApiResponse<T> res = new ApiResponse<>();
+		res.requestReferenceNo = requestReferenceNo;
+		res.sourceId = sourceId;
+		res.timestamp = LocalDateTime.now().toString();
+		return res;
+	}
+
+	public static <T> ApiResponse<T> success(String requestReferenceNo, String sourceId, T data) {
+		ApiResponse<T> res = base(requestReferenceNo, sourceId);
+		res.status = ResponseStatus.SUCCESS.getStatus();
+		res.data = data;
+		return res;
+	}
+
+	public static <T> ApiResponse<T> error(String requestReferenceNo, String sourceId, String errorCode,
+			String errorDescription) {
+		ApiResponse<T> res = base(requestReferenceNo, sourceId);
+		res.status = ResponseStatus.FAILURE.getStatus();
+		res.error = ErrorInfo.of(errorCode, errorDescription);
+		return res;
+	}
+
+	public static <T> ApiResponse<T> error(String requestReferenceNo, String sourceId, String errorCode,
+			String errorDescription, String errorMessage) {
+		ApiResponse<T> res = error(requestReferenceNo, sourceId, errorCode, errorDescription);
+		res.error = ErrorInfo.of(errorCode, errorDescription, errorMessage);
+		return res;
+	}
+
+	public String getRequestReferenceNo() {
+		return requestReferenceNo;
+	}
+
+	public String getSourceId() {
+		return sourceId;
+	}
+
+	public String getStatus() {
+		return status;
+	}
+
+	public T getData() {
+		return data;
+	}
+
+	public ErrorInfo getError() {
+		return error;
+	}
+
+	public String getTimestamp() {
+		return timestamp;
+	}
+
+	@Override
+	public String toString() {
+		return "ApiResponse [requestReferenceNo=" + requestReferenceNo + ", sourceId=" + sourceId + ", status=" + status
+				+ ", data=" + data + ", error=" + error + ", timestamp=" + timestamp + "]";
+	}
+	
+	
+}
+
+
+
+
+package com.tcs.aadesh.dto.response;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class EisMicroResponse {
+	@JsonProperty("SOURCE_ID")
+	private String SOURCE_ID;
+
+	@JsonProperty("RESPONSE_STATUS")
+	private String RESPONSE_STATUS;
+
+	@JsonProperty("ERROR_CODE")
+	private String ERROR_CODE;
+
+	@JsonProperty("ERROR_DESCRIPTION")
+	private String ERROR_DESCRIPTION;
+
+	@JsonProperty("ACCOUNT_NUMBER")
+	private String ACCOUNT_NUMBER;
+
+	@JsonProperty("ACCT_TYPE")
+	private String ACCT_TYPE;
+
+	@JsonProperty("INT_CAT")
+	private String INT_CAT;
+
+	@JsonProperty("NO_OF_STOPS")
+	private String NO_OF_STOPS;
+
+	@JsonProperty("CURR_STATUS")
+	private String CURR_STATUS;
+
+	@JsonProperty("MOP_TYPE")
+	private String MOP_TYPE;
+
+	@JsonProperty("LENDING_STATUS")
+	private String LENDING_STATUS;
+
+	@JsonProperty("INVM_BRANCH_CODE")
+	private String INVM_BRANCH_CODE;
+
+	@JsonProperty("ACCT_DESC")
+	private String ACCT_DESC;
+
+	@JsonProperty("GOVT_FLAG")
+	private String GOVT_FLAG;
+
+	@JsonProperty("PPF_FLAG")
+	private String PPF_FLAG;
+
+	@JsonProperty("OD_INDICATOR")
+	private String OD_INDICATOR;
+
+	@JsonProperty("FDCN_DISH_COUNT")
+	private String FDCN_DISH_COUNT;
+
+	@JsonProperty("MOP_DESC")
+	private String MOP_DESC;
+
+	public EisMicroResponse() {
+	}
+
+	public String getSOURCE_ID() {
+		return SOURCE_ID;
+	}
+
+	public void setSOURCE_ID(String SOURCE_ID) {
+		this.SOURCE_ID = SOURCE_ID;
+	}
+
+	public String getRESPONSE_STATUS() {
+		return RESPONSE_STATUS;
+	}
+
+	public void setRESPONSE_STATUS(String RESPONSE_STATUS) {
+		this.RESPONSE_STATUS = RESPONSE_STATUS;
+	}
+
+	public String getERROR_CODE() {
+		return ERROR_CODE;
+	}
+
+	public void setERROR_CODE(String ERROR_CODE) {
+		this.ERROR_CODE = ERROR_CODE;
+	}
+
+	public String getERROR_DESCRIPTION() {
+		return ERROR_DESCRIPTION;
+	}
+
+	public void setERROR_DESCRIPTION(String ERROR_DESCRIPTION) {
+		this.ERROR_DESCRIPTION = ERROR_DESCRIPTION;
+	}
+
+	public String getACCOUNT_NUMBER() {
+		return ACCOUNT_NUMBER;
+	}
+
+	public void setACCOUNT_NUMBER(String ACCOUNT_NUMBER) {
+		this.ACCOUNT_NUMBER = ACCOUNT_NUMBER;
+	}
+
+	public String getACCT_TYPE() {
+		return ACCT_TYPE;
+	}
+
+	public void setACCT_TYPE(String ACCT_TYPE) {
+		this.ACCT_TYPE = ACCT_TYPE;
+	}
+
+	public String getINT_CAT() {
+		return INT_CAT;
+	}
+
+	public void setINT_CAT(String INT_CAT) {
+		this.INT_CAT = INT_CAT;
+	}
+
+	public String getNO_OF_STOPS() {
+		return NO_OF_STOPS;
+	}
+
+	public void setNO_OF_STOPS(String NO_OF_STOPS) {
+		this.NO_OF_STOPS = NO_OF_STOPS;
+	}
+
+	public String getCURR_STATUS() {
+		return CURR_STATUS;
+	}
+
+	public void setCURR_STATUS(String CURR_STATUS) {
+		this.CURR_STATUS = CURR_STATUS;
+	}
+
+	public String getMOP_TYPE() {
+		return MOP_TYPE;
+	}
+
+	public void setMOP_TYPE(String MOP_TYPE) {
+		this.MOP_TYPE = MOP_TYPE;
+	}
+
+	public String getLENDING_STATUS() {
+		return LENDING_STATUS;
+	}
+
+	public void setLENDING_STATUS(String LENDING_STATUS) {
+		this.LENDING_STATUS = LENDING_STATUS;
+	}
+
+	public String getINVM_BRANCH_CODE() {
+		return INVM_BRANCH_CODE;
+	}
+
+	public void setINVM_BRANCH_CODE(String INVM_BRANCH_CODE) {
+		this.INVM_BRANCH_CODE = INVM_BRANCH_CODE;
+	}
+
+	public String getACCT_DESC() {
+		return ACCT_DESC;
+	}
+
+	public void setACCT_DESC(String ACCT_DESC) {
+		this.ACCT_DESC = ACCT_DESC;
+	}
+
+	public String getGOVT_FLAG() {
+		return GOVT_FLAG;
+	}
+
+	public void setGOVT_FLAG(String GOVT_FLAG) {
+		this.GOVT_FLAG = GOVT_FLAG;
+	}
+
+	public String getPPF_FLAG() {
+		return PPF_FLAG;
+	}
+
+	public void setPPF_FLAG(String PPF_FLAG) {
+		this.PPF_FLAG = PPF_FLAG;
+	}
+
+	public String getOD_INDICATOR() {
+		return OD_INDICATOR;
+	}
+
+	public void setOD_INDICATOR(String OD_INDICATOR) {
+		this.OD_INDICATOR = OD_INDICATOR;
+	}
+
+	public String getFDCN_DISH_COUNT() {
+		return FDCN_DISH_COUNT;
+	}
+
+	public void setFDCN_DISH_COUNT(String FDCN_DISH_COUNT) {
+		this.FDCN_DISH_COUNT = FDCN_DISH_COUNT;
+	}
+
+	public String getMOP_DESC() {
+		return MOP_DESC;
+	}
+
+	public void setMOP_DESC(String MOP_DESC) {
+		this.MOP_DESC = MOP_DESC;
+	}
+
+	@Override
+	public String toString() {
+		return "EisMicroResponse [SOURCE_ID=" + SOURCE_ID + ", RESPONSE_STATUS=" + RESPONSE_STATUS + ", ERROR_CODE="
+				+ ERROR_CODE + ", ERROR_DESCRIPTION=" + ERROR_DESCRIPTION + ", ACCOUNT_NUMBER=" + ACCOUNT_NUMBER
+				+ ", ACCT_TYPE=" + ACCT_TYPE + ", INT_CAT=" + INT_CAT + ", NO_OF_STOPS=" + NO_OF_STOPS
+				+ ", CURR_STATUS=" + CURR_STATUS + ", MOP_TYPE=" + MOP_TYPE + ", LENDING_STATUS=" + LENDING_STATUS
+				+ ", INVM_BRANCH_CODE=" + INVM_BRANCH_CODE + ", ACCT_DESC=" + ACCT_DESC + ", GOVT_FLAG=" + GOVT_FLAG
+				+ ", PPF_FLAG=" + PPF_FLAG + ", OD_INDICATOR=" + OD_INDICATOR + ", FDCN_DISH_COUNT=" + FDCN_DISH_COUNT
+				+ ", MOP_DESC=" + MOP_DESC + "]";
+	}
+
+}
+
+
+
+package com.tcs.aadesh.dto.response;
+
+public class EncryptedResponse {
+
+	private String payload;
+
+	public EncryptedResponse() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public EncryptedResponse(String payload) {
+		super();
+		this.payload = payload;
+	}
+
+	public String getPayload() {
+		return payload;
+	}
+
+	public void setPayload(String payload) {
+		this.payload = payload;
+	}
+
+	@Override
+	public String toString() {
+		return "EncryptedResponse [payload=" + payload + "]";
+	}
+
+}
+
+
+
+package com.tcs.aadesh.dto.wrapper;
+
+import jakarta.servlet.ReadListener;
+import jakarta.servlet.ServletInputStream;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+
+public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
+
+	private final byte[] cachedBody;
+
+	public CachedBodyHttpServletRequest(HttpServletRequest request) throws IOException {
+
+		super(request);
+
+		this.cachedBody = request.getInputStream().readAllBytes();
+	}
+
+	@Override
+	public ServletInputStream getInputStream() {
+
+		ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(cachedBody);
+
+		return new ServletInputStream() {
+
+			@Override
+			public int read() {
+				return byteArrayInputStream.read();
+			}
+
+			@Override
+			public boolean isFinished() {
+				return byteArrayInputStream.available() == 0;
+			}
+
+			@Override
+			public boolean isReady() {
+				return true;
+			}
+
+			@Override
+			public void setReadListener(ReadListener listener) {
+			}
+		};
+	}
+
+	@Override
+	public BufferedReader getReader() {
+
+		return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));
+	}
+
+	@Override
+	public int getContentLength() {
+		return cachedBody.length;
+	}
+
+	@Override
+	public long getContentLengthLong() {
+		return cachedBody.length;
+	}
+
+	public byte[] getCachedBody() {
+		return cachedBody;
+	}
+}
+
+
+
+package com.tcs.aadesh.entity;
+
+import java.io.Serializable;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Objects;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.Table;
+
+@Entity
+@IdClass(AcmmId.class)
+@Table(name = "ACMM")
+public class Acmm implements Serializable {
+
+	private static final long serialVersionUID = 1L;
+
+	@Id
+	@Column(name = "INST_NO", length = 3)
+	private String instNo;
+
+	@Id
+	@Column(name = "UMRN_NO", length = 35)
+	private String umrnNo;
+
+	@Id
+	@Column(name = "ACCT_NO", length = 35)
+	private String acctNo;
+
+	@Column(name = "UNQE_REF_NO", length = 35)
+	private String unqeRefNo;
+
+	@Column(name = "SPONS_BANK_IFSC", length = 11)
+	private String sponsBankIfsc;
+
+	@Column(name = "SPONS_BANK_MICR")
+	private Long sponsBankMicr;
+
+	@Column(name = "UTILITY_CODE", length = 35)
+	private String utilityCode;
+
+	@Column(name = "MANDATE_REC_DATE")
+	private LocalDate mandateRecDate;
+
+	@Column(name = "SERVICE_PROVIDER", length = 140)
+	private String serviceProvider;
+
+	@Column(name = "ACCT_TYPE", length = 35)
+	private String acctType;
+
+	@Column(name = "CUST_BANK", length = 35)
+	private String custBank;
+
+	@Column(name = "BRCH_CODE", length = 5)
+	private String brchCode;
+
+	@Column(name = "DRAW_BANK_IFSC", length = 11)
+	private String drawBankIfsc;
+
+	@Column(name = "DRAW_BANK_MICR")
+	private Integer drawBankMicr;
+
+	@Column(name = "AMT_IN_FIGURES", precision = 13, scale = 2)
+	private BigDecimal amtInFigures;
+
+	@Column(name = "AMOUNT_WORDS", length = 13)
+	private String amountWords;
+
+	@Column(name = "CONSUMER_REF_NO", length = 35)
+	private String consumerRefNo;
+
+	@Column(name = "SCHEME_REF_NO", length = 35)
+	private String schemeRefNo;
+
+	@Column(name = "FREQUENCY1", length = 4)
+	private String frequency1;
+
+	@Column(name = "FREQUENCY2", length = 4)
+	private String frequency2;
+
+	@Column(name = "VALIDITY_PERIOD", length = 1)
+	private String validityPeriod;
+
+	@Column(name = "FROM_DATE")
+	private LocalDate fromDate;
+
+	@Column(name = "TO_DATE")
+	private LocalDate toDate;
+
+	@Column(name = "CUST_NAME", length = 140)
+	private String custName;
+
+	@Column(name = "CUSTOMER_ADD_ID", length = 35)
+	private String customerAddId;
+
+	@Column(name = "LANDLINE_NO", length = 35)
+	private String landlineNo;
+
+	@Column(name = "MOBILE_NO", length = 35)
+	private String mobileNo;
+
+	@Column(name = "EMAIL_ID", length = 50)
+	private String emailId;
+
+	@Column(name = "CATE_CODE", length = 4)
+	private String cateCode;
+
+	@Column(name = "PROPRIETRY", length = 35)
+	private String proprietry;
+
+	@Column(name = "AMND_REASON", length = 35)
+	private String amndReason;
+
+	@Column(name = "CNCL_REASON", length = 4)
+	private String cnclReason;
+
+	@Column(name = "TXN_BRCH_NO", length = 5)
+	private String txnBrchNo;
+
+	@Column(name = "ORGN_SOURCE", length = 1)
+	private String orgnSource;
+
+	@Column(name = "DCA_IDENTIFR", length = 35)
+	private String dcaIdentifr;
+
+	@Column(name = "UMRN_STATUS", length = 2)
+	private String umrnStatus;
+
+	@Column(name = "STATUS_DATE")
+	private LocalDate statusDate;
+
+	@Column(name = "AMT_DEBIT_TYPE", length = 1)
+	private String amtDebitType;
+
+	@Column(name = "MAN_CHR", precision = 13, scale = 2)
+	private BigDecimal manChr;
+
+	@Column(name = "DEBIT_FILE_COUNT")
+	private Integer debitFileCount;
+
+	@Column(name = "LAST_FILE_DATE")
+	private LocalDate lastFileDate;
+
+	public Acmm() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public Acmm(String instNo, String umrnNo, String acctNo, String unqeRefNo, String sponsBankIfsc, Long sponsBankMicr,
+			String utilityCode, LocalDate mandateRecDate, String serviceProvider, String acctType, String custBank,
+			String brchCode, String drawBankIfsc, Integer drawBankMicr, BigDecimal amtInFigures, String amountWords,
+			String consumerRefNo, String schemeRefNo, String frequency1, String frequency2, String validityPeriod,
+			LocalDate fromDate, LocalDate toDate, String custName, String customerAddId, String landlineNo,
+			String mobileNo, String emailId, String cateCode, String proprietry, String amndReason, String cnclReason,
+			String txnBrchNo, String orgnSource, String dcaIdentifr, String umrnStatus, LocalDate statusDate,
+			String amtDebitType, BigDecimal manChr, Integer debitFileCount, LocalDate lastFileDate) {
+		super();
+		this.instNo = instNo;
+		this.umrnNo = umrnNo;
+		this.acctNo = acctNo;
+		this.unqeRefNo = unqeRefNo;
+		this.sponsBankIfsc = sponsBankIfsc;
+		this.sponsBankMicr = sponsBankMicr;
+		this.utilityCode = utilityCode;
+		this.mandateRecDate = mandateRecDate;
+		this.serviceProvider = serviceProvider;
+		this.acctType = acctType;
+		this.custBank = custBank;
+		this.brchCode = brchCode;
+		this.drawBankIfsc = drawBankIfsc;
+		this.drawBankMicr = drawBankMicr;
+		this.amtInFigures = amtInFigures;
+		this.amountWords = amountWords;
+		this.consumerRefNo = consumerRefNo;
+		this.schemeRefNo = schemeRefNo;
+		this.frequency1 = frequency1;
+		this.frequency2 = frequency2;
+		this.validityPeriod = validityPeriod;
+		this.fromDate = fromDate;
+		this.toDate = toDate;
+		this.custName = custName;
+		this.customerAddId = customerAddId;
+		this.landlineNo = landlineNo;
+		this.mobileNo = mobileNo;
+		this.emailId = emailId;
+		this.cateCode = cateCode;
+		this.proprietry = proprietry;
+		this.amndReason = amndReason;
+		this.cnclReason = cnclReason;
+		this.txnBrchNo = txnBrchNo;
+		this.orgnSource = orgnSource;
+		this.dcaIdentifr = dcaIdentifr;
+		this.umrnStatus = umrnStatus;
+		this.statusDate = statusDate;
+		this.amtDebitType = amtDebitType;
+		this.manChr = manChr;
+		this.debitFileCount = debitFileCount;
+		this.lastFileDate = lastFileDate;
+	}
+
+	public String getInstNo() {
+		return instNo;
+	}
+
+	public void setInstNo(String instNo) {
+		this.instNo = instNo;
+	}
+
+	public String getUmrnNo() {
+		return umrnNo;
+	}
+
+	public void setUmrnNo(String umrnNo) {
+		this.umrnNo = umrnNo;
+	}
+
+	public String getAcctNo() {
+		return acctNo;
+	}
+
+	public void setAcctNo(String acctNo) {
+		this.acctNo = acctNo;
+	}
+
+	public String getUnqeRefNo() {
+		return unqeRefNo;
+	}
+
+	public void setUnqeRefNo(String unqeRefNo) {
+		this.unqeRefNo = unqeRefNo;
+	}
+
+	public String getSponsBankIfsc() {
+		return sponsBankIfsc;
+	}
+
+	public void setSponsBankIfsc(String sponsBankIfsc) {
+		this.sponsBankIfsc = sponsBankIfsc;
+	}
+
+	public Long getSponsBankMicr() {
+		return sponsBankMicr;
+	}
+
+	public void setSponsBankMicr(Long sponsBankMicr) {
+		this.sponsBankMicr = sponsBankMicr;
+	}
+
+	public String getUtilityCode() {
+		return utilityCode;
+	}
+
+	public void setUtilityCode(String utilityCode) {
+		this.utilityCode = utilityCode;
+	}
+
+	public LocalDate getMandateRecDate() {
+		return mandateRecDate;
+	}
+
+	public void setMandateRecDate(LocalDate mandateRecDate) {
+		this.mandateRecDate = mandateRecDate;
+	}
+
+	public String getServiceProvider() {
+		return serviceProvider;
+	}
+
+	public void setServiceProvider(String serviceProvider) {
+		this.serviceProvider = serviceProvider;
+	}
+
+	public String getAcctType() {
+		return acctType;
+	}
+
+	public void setAcctType(String acctType) {
+		this.acctType = acctType;
+	}
+
+	public String getCustBank() {
+		return custBank;
+	}
+
+	public void setCustBank(String custBank) {
+		this.custBank = custBank;
+	}
+
+	public String getBrchCode() {
+		return brchCode;
+	}
+
+	public void setBrchCode(String brchCode) {
+		this.brchCode = brchCode;
+	}
+
+	public String getDrawBankIfsc() {
+		return drawBankIfsc;
+	}
+
+	public void setDrawBankIfsc(String drawBankIfsc) {
+		this.drawBankIfsc = drawBankIfsc;
+	}
+
+	public Integer getDrawBankMicr() {
+		return drawBankMicr;
+	}
+
+	public void setDrawBankMicr(Integer drawBankMicr) {
+		this.drawBankMicr = drawBankMicr;
+	}
+
+	public BigDecimal getAmtInFigures() {
+		return amtInFigures;
+	}
+
+	public void setAmtInFigures(BigDecimal amtInFigures) {
+		this.amtInFigures = amtInFigures;
+	}
+
+	public String getAmountWords() {
+		return amountWords;
+	}
+
+	public void setAmountWords(String amountWords) {
+		this.amountWords = amountWords;
+	}
+
+	public String getConsumerRefNo() {
+		return consumerRefNo;
+	}
+
+	public void setConsumerRefNo(String consumerRefNo) {
+		this.consumerRefNo = consumerRefNo;
+	}
+
+	public String getSchemeRefNo() {
+		return schemeRefNo;
+	}
+
+	public void setSchemeRefNo(String schemeRefNo) {
+		this.schemeRefNo = schemeRefNo;
+	}
+
+	public String getFrequency1() {
+		return frequency1;
+	}
+
+	public void setFrequency1(String frequency1) {
+		this.frequency1 = frequency1;
+	}
+
+	public String getFrequency2() {
+		return frequency2;
+	}
+
+	public void setFrequency2(String frequency2) {
+		this.frequency2 = frequency2;
+	}
+
+	public String getValidityPeriod() {
+		return validityPeriod;
+	}
+
+	public void setValidityPeriod(String validityPeriod) {
+		this.validityPeriod = validityPeriod;
+	}
+
+	public LocalDate getFromDate() {
+		return fromDate;
+	}
+
+	public void setFromDate(LocalDate fromDate) {
+		this.fromDate = fromDate;
+	}
+
+	public LocalDate getToDate() {
+		return toDate;
+	}
+
+	public void setToDate(LocalDate toDate) {
+		this.toDate = toDate;
+	}
+
+	public String getCustName() {
+		return custName;
+	}
+
+	public void setCustName(String custName) {
+		this.custName = custName;
+	}
+
+	public String getCustomerAddId() {
+		return customerAddId;
+	}
+
+	public void setCustomerAddId(String customerAddId) {
+		this.customerAddId = customerAddId;
+	}
+
+	public String getLandlineNo() {
+		return landlineNo;
+	}
+
+	public void setLandlineNo(String landlineNo) {
+		this.landlineNo = landlineNo;
+	}
+
+	public String getMobileNo() {
+		return mobileNo;
+	}
+
+	public void setMobileNo(String mobileNo) {
+		this.mobileNo = mobileNo;
+	}
+
+	public String getEmailId() {
+		return emailId;
+	}
+
+	public void setEmailId(String emailId) {
+		this.emailId = emailId;
+	}
+
+	public String getCateCode() {
+		return cateCode;
+	}
+
+	public void setCateCode(String cateCode) {
+		this.cateCode = cateCode;
+	}
+
+	public String getProprietry() {
+		return proprietry;
+	}
+
+	public void setProprietry(String proprietry) {
+		this.proprietry = proprietry;
+	}
+
+	public String getAmndReason() {
+		return amndReason;
+	}
+
+	public void setAmndReason(String amndReason) {
+		this.amndReason = amndReason;
+	}
+
+	public String getCnclReason() {
+		return cnclReason;
+	}
+
+	public void setCnclReason(String cnclReason) {
+		this.cnclReason = cnclReason;
+	}
+
+	public String getTxnBrchNo() {
+		return txnBrchNo;
+	}
+
+	public void setTxnBrchNo(String txnBrchNo) {
+		this.txnBrchNo = txnBrchNo;
+	}
+
+	public String getOrgnSource() {
+		return orgnSource;
+	}
+
+	public void setOrgnSource(String orgnSource) {
+		this.orgnSource = orgnSource;
+	}
+
+	public String getDcaIdentifr() {
+		return dcaIdentifr;
+	}
+
+	public void setDcaIdentifr(String dcaIdentifr) {
+		this.dcaIdentifr = dcaIdentifr;
+	}
+
+	public String getUmrnStatus() {
+		return umrnStatus;
+	}
+
+	public void setUmrnStatus(String umrnStatus) {
+		this.umrnStatus = umrnStatus;
+	}
+
+	public LocalDate getStatusDate() {
+		return statusDate;
+	}
+
+	public void setStatusDate(LocalDate statusDate) {
+		this.statusDate = statusDate;
+	}
+
+	public String getAmtDebitType() {
+		return amtDebitType;
+	}
+
+	public void setAmtDebitType(String amtDebitType) {
+		this.amtDebitType = amtDebitType;
+	}
+
+	public BigDecimal getManChr() {
+		return manChr;
+	}
+
+	public void setManChr(BigDecimal manChr) {
+		this.manChr = manChr;
+	}
+
+	public Integer getDebitFileCount() {
+		return debitFileCount;
+	}
+
+	public void setDebitFileCount(Integer debitFileCount) {
+		this.debitFileCount = debitFileCount;
+	}
+
+	public LocalDate getLastFileDate() {
+		return lastFileDate;
+	}
+
+	public void setLastFileDate(LocalDate lastFileDate) {
+		this.lastFileDate = lastFileDate;
+	}
+
+	public static long getSerialversionuid() {
+		return serialVersionUID;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(acctNo, acctType, amndReason, amountWords, amtDebitType, amtInFigures, brchCode, cateCode,
+				cnclReason, consumerRefNo, custBank, custName, customerAddId, dcaIdentifr, debitFileCount, drawBankIfsc,
+				drawBankMicr, emailId, frequency1, frequency2, fromDate, instNo, landlineNo, lastFileDate, manChr,
+				mandateRecDate, mobileNo, orgnSource, proprietry, schemeRefNo, serviceProvider, sponsBankIfsc,
+				sponsBankMicr, statusDate, toDate, txnBrchNo, umrnNo, umrnStatus, unqeRefNo, utilityCode,
+				validityPeriod);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		Acmm other = (Acmm) obj;
+		return Objects.equals(acctNo, other.acctNo) && Objects.equals(acctType, other.acctType)
+				&& Objects.equals(amndReason, other.amndReason) && Objects.equals(amountWords, other.amountWords)
+				&& Objects.equals(amtDebitType, other.amtDebitType) && Objects.equals(amtInFigures, other.amtInFigures)
+				&& Objects.equals(brchCode, other.brchCode) && Objects.equals(cateCode, other.cateCode)
+				&& Objects.equals(cnclReason, other.cnclReason) && Objects.equals(consumerRefNo, other.consumerRefNo)
+				&& Objects.equals(custBank, other.custBank) && Objects.equals(custName, other.custName)
+				&& Objects.equals(customerAddId, other.customerAddId) && Objects.equals(dcaIdentifr, other.dcaIdentifr)
+				&& Objects.equals(debitFileCount, other.debitFileCount)
+				&& Objects.equals(drawBankIfsc, other.drawBankIfsc) && Objects.equals(drawBankMicr, other.drawBankMicr)
+				&& Objects.equals(emailId, other.emailId) && Objects.equals(frequency1, other.frequency1)
+				&& Objects.equals(frequency2, other.frequency2) && Objects.equals(fromDate, other.fromDate)
+				&& Objects.equals(instNo, other.instNo) && Objects.equals(landlineNo, other.landlineNo)
+				&& Objects.equals(lastFileDate, other.lastFileDate) && Objects.equals(manChr, other.manChr)
+				&& Objects.equals(mandateRecDate, other.mandateRecDate) && Objects.equals(mobileNo, other.mobileNo)
+				&& Objects.equals(orgnSource, other.orgnSource) && Objects.equals(proprietry, other.proprietry)
+				&& Objects.equals(schemeRefNo, other.schemeRefNo)
+				&& Objects.equals(serviceProvider, other.serviceProvider)
+				&& Objects.equals(sponsBankIfsc, other.sponsBankIfsc)
+				&& Objects.equals(sponsBankMicr, other.sponsBankMicr) && Objects.equals(statusDate, other.statusDate)
+				&& Objects.equals(toDate, other.toDate) && Objects.equals(txnBrchNo, other.txnBrchNo)
+				&& Objects.equals(umrnNo, other.umrnNo) && Objects.equals(umrnStatus, other.umrnStatus)
+				&& Objects.equals(unqeRefNo, other.unqeRefNo) && Objects.equals(utilityCode, other.utilityCode)
+				&& Objects.equals(validityPeriod, other.validityPeriod);
+	}
+
+	@Override
+	public String toString() {
+		return "Acmm [instNo=" + instNo + ", umrnNo=" + umrnNo + ", acctNo=" + acctNo + ", unqeRefNo=" + unqeRefNo
+				+ ", sponsBankIfsc=" + sponsBankIfsc + ", sponsBankMicr=" + sponsBankMicr + ", utilityCode="
+				+ utilityCode + ", mandateRecDate=" + mandateRecDate + ", serviceProvider=" + serviceProvider
+				+ ", acctType=" + acctType + ", custBank=" + custBank + ", brchCode=" + brchCode + ", drawBankIfsc="
+				+ drawBankIfsc + ", drawBankMicr=" + drawBankMicr + ", amtInFigures=" + amtInFigures + ", amountWords="
+				+ amountWords + ", consumerRefNo=" + consumerRefNo + ", schemeRefNo=" + schemeRefNo + ", frequency1="
+				+ frequency1 + ", frequency2=" + frequency2 + ", validityPeriod=" + validityPeriod + ", fromDate="
+				+ fromDate + ", toDate=" + toDate + ", custName=" + custName + ", customerAddId=" + customerAddId
+				+ ", landlineNo=" + landlineNo + ", mobileNo=" + mobileNo + ", emailId=" + emailId + ", cateCode="
+				+ cateCode + ", proprietry=" + proprietry + ", amndReason=" + amndReason + ", cnclReason=" + cnclReason
+				+ ", txnBrchNo=" + txnBrchNo + ", orgnSource=" + orgnSource + ", dcaIdentifr=" + dcaIdentifr
+				+ ", umrnStatus=" + umrnStatus + ", statusDate=" + statusDate + ", amtDebitType=" + amtDebitType
+				+ ", manChr=" + manChr + ", debitFileCount=" + debitFileCount + ", lastFileDate=" + lastFileDate + "]";
+	}
+
+}
+
+
+
+package com.tcs.aadesh.entity;
+
+import java.io.Serializable;
+import java.util.Objects;
+
+public class AcmmId implements Serializable {
+
+	private static final long serialVersionUID = 1L;
+	private String instNo;
+	private String umrnNo;
+	private String acctNo;
+
+	public AcmmId() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public AcmmId(String instNo, String umrnNo, String acctNo) {
+		super();
+		this.instNo = instNo;
+		this.umrnNo = umrnNo;
+		this.acctNo = acctNo;
+	}
+
+	public String getInstNo() {
+		return instNo;
+	}
+
+	public void setInstNo(String instNo) {
+		this.instNo = instNo;
+	}
+
+	public String getUmrnNo() {
+		return umrnNo;
+	}
+
+	public void setUmrnNo(String umrnNo) {
+		this.umrnNo = umrnNo;
+	}
+
+	public String getAcctNo() {
+		return acctNo;
+	}
+
+	public void setAcctNo(String acctNo) {
+		this.acctNo = acctNo;
+	}
+
+	public static long getSerialversionuid() {
+		return serialVersionUID;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(acctNo, instNo, umrnNo);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		AcmmId other = (AcmmId) obj;
+		return Objects.equals(acctNo, other.acctNo) && Objects.equals(instNo, other.instNo)
+				&& Objects.equals(umrnNo, other.umrnNo);
+	}
+
+	@Override
+	public String toString() {
+		return "AcmmPK [instNo=" + instNo + ", umrnNo=" + umrnNo + ", acctNo=" + acctNo + "]";
+	}
+}
+
+
+package com.tcs.aadesh.entity;
+
+import java.util.Objects;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+
+@Entity
+@Table(name = "AMOUNT1_CARD")
+public class Amount1Card {
+	@Id
+	@Column(name = "MANDATE_AMOUNT", length = 13)
+	private String mandateAmount;
+
+	public Amount1Card() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public Amount1Card(String mandateAmount) {
+		super();
+		this.mandateAmount = mandateAmount;
+	}
+
+	public String getMandateAmount() {
+		return mandateAmount;
+	}
+
+	public void setMandateAmount(String mandateAmount) {
+		this.mandateAmount = mandateAmount;
+	}
+
+	@Override
+	public String toString() {
+		return "Amount1Card [mandateAmount=" + mandateAmount + "]";
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(mandateAmount);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		Amount1Card other = (Amount1Card) obj;
+		return Objects.equals(mandateAmount, other.mandateAmount);
+	}
+
+}
+
+
+
+package com.tcs.aadesh.entity;
+
+import java.util.Objects;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.validation.constraints.NotBlank;
+
+@Entity
+@Table(name = "BOUNCE_COUNT_CARD")
+public class BounceCountCard {
+
+	@Id
+	@Column(name = "DISHONOUR_COUNTER", length = 10)
+	@NotBlank(message = "DISHONOUR_COUNTER is required")
+	private String dishonourCounter;
+
+	public BounceCountCard() {
+		super();
+		// TODO Auto-generated constructor stub
+	}
+
+	public BounceCountCard(@NotBlank(message = "DISHONOUR_COUNTER is required") String dishonourCounter) {
+		super();
+		this.dishonourCounter = dishonourCounter;
+	}
+
+	public String getDishonourCounter() {
+		return dishonourCounter;
+	}
+
+	public void setDishonourCounter(String dishonourCounter) {
+		this.dishonourCounter = dishonourCounter;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(dishonourCounter);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		BounceCountCard other = (BounceCountCard) obj;
+		return Objects.equals(dishonourCounter, other.dishonourCounter);
+	}
+
+	@Override
+	public String toString() {
+		return "BounceCountCard [dishonourCounter=" + dishonourCounter + "]";
+	}
+
+}
+
+
+package com.tcs.aadesh.entity;
+
+import java.time.LocalDateTime;
+import java.util.Objects;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.Lob;
+import jakarta.persistence.Table;
+
+@Entity
+@IdClass(EmandateAuditLogId.class)
+@Table(name = "EMANDATE_AUDIT_LOG")
+public class EmandateAuditLog {
+
+	@Id
+	@Column(name = "REQUEST_REFERENCE_NO")
+	private String requestReferenceNo;
+
+	@Id
+	@Column(name = "ENTRY_DATE")
+	private LocalDateTime entryDate;
+
+	@Column(name = "UMRN_NO")
+	private String umrnNo;
+
+	@Column(name = "RESPONSE_STATUS")
+	private String responseStatus = "0"; // 0 = success, 1 = failure
+
+	@Column(name = "ERROR_CODE")
+	private String errorCode;
+
+	@Column(name = "ERROR_DESCRIPTION", length = 1000)
+	private String errorDescription;
+
+	@Column(name = "CLIENT_IP")
+	private String clientIp;
+
+	@Column(name = "TELLER_NO")
+	private String tellerNo;
+
+	@Column(name = "SOURCE_ID")
+	private String sourceId;
+
+	@Column(name = "TXN_NO")
+	private String txnNo;
+
+	@Column(name = "TXN_NAME")
+	private String txnName;
+
+	@Column(name = "REQUEST_URI")
+	private String requestUri;
+
+	@Column(name = "HTTP_METHOD")
+	private String httpMethod;
+
+	@Column(name = "HTTP_STATUS")
+	private Integer httpStatus;
+
+	@Lob
+	@Column(name = "REQUEST_BODY", length = 4000)
+	private String requestBody;
+
+	@Lob
+	@Column(name = "RESPONSE_BODY", length = 4000)
+	private String responseBody;
+
+	public EmandateAuditLog() {
+	}
+
+	public EmandateAuditLog(String requestReferenceNo, String umrnNo, String responseStatus, String errorCode,
+			String errorDescription, String clientIp, String tellerNo, String sourceId, String txnNo, String txnName,
+			String requestUri, String httpMethod, Integer httpStatus, LocalDateTime entryDate, String requestBody,
+			String responseBody) {
+		super();
+		this.requestReferenceNo = requestReferenceNo;
+		this.umrnNo = umrnNo;
+		this.responseStatus = responseStatus;
+		this.errorCode = errorCode;
+		this.errorDescription = errorDescription;
+		this.clientIp = clientIp;
+		this.tellerNo = tellerNo;
+		this.sourceId = sourceId;
+		this.txnNo = txnNo;
+		this.txnName = txnName;
+		this.requestUri = requestUri;
+		this.httpMethod = httpMethod;
+		this.httpStatus = httpStatus;
+		this.entryDate = entryDate;
+		this.requestBody = requestBody;
+		this.responseBody = responseBody;
+	}
+
+	public String getRequestReferenceNo() {
+		return requestReferenceNo;
+	}
+
+	public void setRequestReferenceNo(String requestReferenceNo) {
+		this.requestReferenceNo = requestReferenceNo;
+	}
+
+	public String getUmrnNo() {
+		return umrnNo;
+	}
+
+	public void setUmrnNo(String umrnNo) {
+		this.umrnNo = umrnNo;
+	}
+
+	public String getResponseStatus() {
+		return responseStatus;
+	}
+
+	public void setResponseStatus(String responseStatus) {
+		this.responseStatus = responseStatus;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorDescription() {
+		return errorDescription;
+	}
+
+	public void setErrorDescription(String errorDescription) {
+		this.errorDescription = errorDescription;
+	}
+
+	public String getClientIp() {
+		return clientIp;
+	}
+
+	public void setClientIp(String clientIp) {
+		this.clientIp = clientIp;
+	}
+
+	public String getTellerNo() {
+		return tellerNo;
+	}
+
+	public void setTellerNo(String tellerNo) {
+		this.tellerNo = tellerNo;
+	}
+
+	public String getSourceId() {
+		return sourceId;
+	}
+
+	public void setSourceId(String sourceId) {
+		this.sourceId = sourceId;
+	}
+
+	public String getTxnNo() {
+		return txnNo;
+	}
+
+	public void setTxnNo(String txnNo) {
+		this.txnNo = txnNo;
+	}
+
+	public String getTxnName() {
+		return txnName;
+	}
+
+	public void setTxnName(String txnName) {
+		this.txnName = txnName;
+	}
+
+	public String getRequestUri() {
+		return requestUri;
+	}
+
+	public void setRequestUri(String requestUri) {
+		this.requestUri = requestUri;
+	}
+
+	public String getHttpMethod() {
+		return httpMethod;
+	}
+
+	public void setHttpMethod(String httpMethod) {
+		this.httpMethod = httpMethod;
+	}
+
+	public Integer getHttpStatus() {
+		return httpStatus;
+	}
+
+	public void setHttpStatus(Integer httpStatus) {
+		this.httpStatus = httpStatus;
+	}
+
+	public LocalDateTime getEntryDate() {
+		return entryDate;
+	}
+
+	public void setEntryDate(LocalDateTime entryDate) {
+		this.entryDate = entryDate;
+	}
+
+	public String getRequestBody() {
+		return requestBody;
+	}
+
+	public void setRequestBody(String requestBody) {
+		this.requestBody = requestBody;
+	}
+
+	public String getResponseBody() {
+		return responseBody;
+	}
+
+	public void setResponseBody(String responseBody) {
+		this.responseBody = responseBody;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(clientIp, entryDate, errorCode, errorDescription, httpMethod, httpStatus, requestBody,
+				requestReferenceNo, requestUri, responseBody, responseStatus, sourceId, tellerNo, txnName, txnNo,
+				umrnNo);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		EmandateAuditLog other = (EmandateAuditLog) obj;
+		return Objects.equals(clientIp, other.clientIp) && Objects.equals(entryDate, other.entryDate)
+				&& Objects.equals(errorCode, other.errorCode)
+				&& Objects.equals(errorDescription, other.errorDescription)
+				&& Objects.equals(httpMethod, other.httpMethod) && Objects.equals(httpStatus, other.httpStatus)
+				&& Objects.equals(requestBody, other.requestBody)
+				&& Objects.equals(requestReferenceNo, other.requestReferenceNo)
+				&& Objects.equals(requestUri, other.requestUri) && Objects.equals(responseBody, other.responseBody)
+				&& Objects.equals(responseStatus, other.responseStatus) && Objects.equals(sourceId, other.sourceId)
+				&& Objects.equals(tellerNo, other.tellerNo) && Objects.equals(txnName, other.txnName)
+				&& Objects.equals(txnNo, other.txnNo) && Objects.equals(umrnNo, other.umrnNo);
+	}
+
+	@Override
+	public String toString() {
+		return "EmandateAuditLog [requestReferenceNo=" + requestReferenceNo + ", umrnNo=" + umrnNo + ", responseStatus="
+				+ responseStatus + ", errorCode=" + errorCode + ", errorDescription=" + errorDescription + ", clientIp="
+				+ clientIp + ", tellerNo=" + tellerNo + ", sourceId=" + sourceId + ", txnNo=" + txnNo + ", txnName="
+				+ txnName + ", requestUri=" + requestUri + ", httpMethod=" + httpMethod + ", httpStatus=" + httpStatus
+				+ ", entryDate=" + entryDate + ", requestBody=" + requestBody + ", responseBody=" + responseBody + "]";
+	}
+
+}
+
+
+package com.tcs.aadesh.exception;
+
+public class BusinessException extends RuntimeException {
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public BusinessException(String errorCode, String errorMessage) {
+		super(errorMessage);
+		this.errorCode = errorCode;
+		this.errorMessage = errorMessage;
+	}
+
+	public BusinessException(String errorCode) {
+		super();
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}
+
+
+package com.tcs.aadesh.exception;
+
+public class EisMicroException extends RuntimeException {
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+	
+	public EisMicroException(String errorCode) {
+		super();
+		this.errorCode = errorCode;
+	}
+
+	public EisMicroException(String errorCode, String errorMessage) {
+		super(errorMessage);
+		this.errorCode = errorCode;
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+}
+
+
+package com.tcs.aadesh.exception;
+
+public class InvalidRequestHeaderException extends RuntimeException {
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public InvalidRequestHeaderException(String errorMessage) {
+		super(errorMessage);
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}
+
+
+package com.tcs.aadesh.exception;
+
+import com.tcs.aadesh.constant.AppConstants;
+
+public class TransactionFailedException extends RuntimeException {
+
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public TransactionFailedException() {
+		super();
+		this.errorCode = AppConstants.TECHNICAL_ERROR.getValue();
+	}
+
+	public TransactionFailedException(String errorMessage) {
+		super(errorMessage);
+		this.errorCode = AppConstants.TECHNICAL_ERROR.getValue();
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+
+}
+
+package com.tcs.aadesh.exception;
+
+import com.tcs.aadesh.constant.AppConstants;
+
+public class UnexpectedException extends RuntimeException {
+
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public UnexpectedException() {
+		super();
+		this.errorCode = AppConstants.TECHNICAL_ERROR.getValue();
+	}
+
+	public UnexpectedException(String errorMessage) {
+		super(errorMessage);
+		this.errorCode = AppConstants.TECHNICAL_ERROR.getValue();
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}
+
+
+package com.tcs.aadesh.exception.handler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import com.tcs.aadesh.cache.ErrorCodeCacheService;
+import com.tcs.aadesh.config.properties.FieldErrorCodeProperties;
+import com.tcs.aadesh.constant.AppConstants;
+import com.tcs.aadesh.context.ErrorContext;
+import com.tcs.aadesh.context.ErrorContextHolder;
+import com.tcs.aadesh.dto.response.ApiResponse;
+import com.tcs.aadesh.exception.BusinessException;
+import com.tcs.aadesh.exception.EisMicroException;
+import com.tcs.aadesh.exception.InvalidRequestHeaderException;
+import com.tcs.aadesh.exception.TransactionFailedException;
+import com.tcs.aadesh.exception.UnexpectedException;
+import com.tcs.aadesh.util.ErrorLogger;
+
+import jakarta.servlet.http.HttpServletRequest;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+	private static final String TECHNICAL_ERROR = AppConstants.TECHNICAL_ERROR.getValue();
+
+	private final FieldErrorCodeProperties fieldProperties;
+	private final ErrorCodeCacheService errorCodeCache;
+
+	public GlobalExceptionHandler(FieldErrorCodeProperties fieldProperties, ErrorCodeCacheService errorCodeCache) {
+		this.fieldProperties = fieldProperties;
+		this.errorCodeCache = errorCodeCache;
+	}
+
+	private ResponseEntity<ApiResponse<Void>> buildErrorResponse(HttpServletRequest request, Exception ex,
+			HttpStatus status, String errorCode, String errorDescription, String errorMessage) {
+
+		ErrorLogger.log(log, ex);
+
+		ErrorContextHolder.set(ErrorContext.of(errorCode, errorDescription));
+		
+		String refNo = request.getHeader("X-Request-Reference-No");
+		String sourceId = request.getHeader("X-Source-Id");
+
+		return ResponseEntity.status(status)
+				.body(errorMessage != null
+						? ApiResponse.error(refNo, sourceId, errorCode, errorDescription, errorMessage)
+						: ApiResponse.error(refNo, sourceId, errorCode, errorDescription));
+	}
+
+	// For handlers that have errorMessage = null
+	private ResponseEntity<ApiResponse<Void>> buildErrorResponse(HttpServletRequest request, Exception ex,
+			HttpStatus status, String errorCode, String errorDescription) {
+
+		return buildErrorResponse(request, ex, status, errorCode, errorDescription, null);
+	}
+
+	// ----- EXCEPTION HANDLERS ------------------------------------------------
+
+	@ExceptionHandler(InvalidRequestHeaderException.class)
+	public ResponseEntity<ApiResponse<Void>> handleValidationAnnotation(InvalidRequestHeaderException ex,
+			HttpServletRequest request) {
+		ErrorLogger.log(log, ex);
+		return buildErrorResponse(request, ex, HttpStatus.BAD_REQUEST, "ER015", errorCodeCache.getDescription("ER015"),
+				ex.getErrorMessage());
+	}
+
+	@ExceptionHandler(MethodArgumentNotValidException.class)
+	public ResponseEntity<ApiResponse<Void>> handleValidationAnnotation(MethodArgumentNotValidException ex,
+			HttpServletRequest request) {
+		ErrorLogger.log(log, ex);
+
+		FieldError fieldError = ex.getBindingResult().getFieldErrors().stream().findFirst().orElse(null);
+
+		if (fieldError != null) {
+			String field = fieldError.getField();
+
+			String errorCode;
+			if ("Size".equals(fieldError.getCode())) {
+				errorCode = "AD009";
+			} else {
+				errorCode = fieldProperties.getCode(field);
+			}
+
+			return buildErrorResponse(request, ex, HttpStatus.BAD_REQUEST, errorCode,
+					errorCodeCache.getDescription(errorCode), fieldError.getDefaultMessage());
+		}
+
+		var globalError = ex.getBindingResult().getGlobalErrors().stream().findFirst().orElse(null);
+
+		return buildErrorResponse(request, ex, HttpStatus.BAD_REQUEST, "AD003", // Invalid request field
+				errorCodeCache.getDescription("AD003"), globalError != null ? globalError.getDefaultMessage() : null);
+	}
+
+	@ExceptionHandler(MissingRequestHeaderException.class)
+	public ResponseEntity<ApiResponse<Void>> handleMissingHeader(MissingRequestHeaderException ex,
+			HttpServletRequest request) {
+		String field = ex.getHeaderName();
+		String errorCode = fieldProperties.getCode(field);
+
+		return buildErrorResponse(request, ex, HttpStatus.BAD_REQUEST, errorCode,
+				errorCodeCache.getDescription(errorCode));
+	}
+
+	@ExceptionHandler(BusinessException.class)
+	public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException ex, HttpServletRequest request) {
+		
+		ErrorLogger.log(log, ex.getErrorMessage(), ex);
+
+		return buildErrorResponse(
+				request, 
+				ex, 
+				HttpStatus.BAD_REQUEST, 
+				ex.getErrorCode(),
+				errorCodeCache.getDescription(ex.getErrorCode()),
+				ex.getErrorMessage()
+				);
+	}
+	
+	@ExceptionHandler(UnexpectedException.class)
+	public ResponseEntity<ApiResponse<Void>> handleUnexpected(UnexpectedException ex, HttpServletRequest request) {
+		ErrorLogger.log(log, ex.getErrorMessage(), ex);
+
+		return buildErrorResponse(
+				request, 
+				ex, 
+				HttpStatus.INTERNAL_SERVER_ERROR,
+				ex.getErrorCode(),
+				errorCodeCache.getDescription(ex.getErrorCode()));
+	}
+
+	@ExceptionHandler(EisMicroException.class)
+	public ResponseEntity<ApiResponse<Void>> handleEisMicro(EisMicroException ex, HttpServletRequest request) {
+		String errCode = ex.getErrorCode();
+		String errDesc;
+
+		if (errCode.equalsIgnoreCase("0188")) {
+			errDesc = "ACCOUNT NOT FOUND IN CBS";
+		} else {
+			errDesc = errorCodeCache.getDescription(errCode);
+		}
+		return buildErrorResponse(request, ex, HttpStatus.INTERNAL_SERVER_ERROR, errCode, errDesc,
+				ex.getErrorMessage());
+	}
+
+	@ExceptionHandler(TransactionFailedException.class)
+	public ResponseEntity<ApiResponse<Void>> handleTransactionFailedException(TransactionFailedException ex,
+			HttpServletRequest request) {
+		return buildErrorResponse(request, ex, HttpStatus.INTERNAL_SERVER_ERROR, ex.getErrorCode(),
+				errorCodeCache.getDescription(ex.getErrorCode()), "A system error occurred. Please try again later.");
+	}
+
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ApiResponse<Void>> handleUnreadable(HttpMessageNotReadableException ex,
+			HttpServletRequest request) {
+		return buildErrorResponse(request, ex, HttpStatus.BAD_REQUEST, TECHNICAL_ERROR,
+				errorCodeCache.getDescription(TECHNICAL_ERROR));
+	}
+
+	@ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+	public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex,
+			HttpServletRequest request) {
+		return buildErrorResponse(request, ex, HttpStatus.METHOD_NOT_ALLOWED, TECHNICAL_ERROR,
+				errorCodeCache.getDescription(TECHNICAL_ERROR));
+	}
+
+	@ExceptionHandler(DataAccessException.class)
+	public ResponseEntity<ApiResponse<Void>> handleDataAccess(DataAccessException ex, HttpServletRequest request) {
+		return buildErrorResponse(request, ex, HttpStatus.INTERNAL_SERVER_ERROR, TECHNICAL_ERROR,
+				errorCodeCache.getDescription(TECHNICAL_ERROR), "A system error occurred. Please try again later.");
+	}
+
+	@ExceptionHandler(Exception.class)
+	public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex, HttpServletRequest request) {
+		return buildErrorResponse(request, ex, HttpStatus.INTERNAL_SERVER_ERROR, TECHNICAL_ERROR,
+				errorCodeCache.getDescription(TECHNICAL_ERROR), "A system error occurred. Please try again later.");
+	}
+}
+
+
+
+
+
+package com.tcs.aadesh.filter;
+
+import java.io.IOException;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingResponseWrapper;
+
+import com.tcs.aadesh.context.ErrorContextHolder;
+import com.tcs.aadesh.dto.wrapper.CachedBodyHttpServletRequest;
+import com.tcs.aadesh.service.AuditService;
+
+import jakarta.annotation.Nonnull;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+@Component
+@Order(1)
+public class AuditFilter extends OncePerRequestFilter {
+	
+	private static final Logger log = LoggerFactory.getLogger(AuditFilter.class);
+
+
+	private static final List<String> EXCLUDED_URIS = List.of(
+			"/inward/e-mandate/auth/login",
+			"/inward/e-mandate/actuator",
+			"/inward/e-mandate/health",
+			"/inward/e-mandate/test/",
+			"/inward/e-mandate/v2/api-docs",
+			"/inward/e-mandate/swagger-ui.html"
+			);
+
+	private final AuditService auditService;
+
+	public AuditFilter(AuditService auditService) {
+		this.auditService = auditService;
+	}
+
+	@Override
+	protected boolean shouldNotFilter(HttpServletRequest request) {
+		String uri = request.getRequestURI();
+		return EXCLUDED_URIS.stream().anyMatch(uri::startsWith);
+	}
+
+	@Override
+	protected void doFilterInternal(
+			@Nonnull HttpServletRequest request, 
+			@Nonnull HttpServletResponse response,
+			@Nonnull FilterChain filterChain) throws ServletException, IOException {
+
+		CachedBodyHttpServletRequest requestWrapper = new CachedBodyHttpServletRequest(request);
+		ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(response);
+
+		try {
+			filterChain.doFilter(requestWrapper, responseWrapper);
+		} finally {
+			try {
+				auditService.saveAuditLog(requestWrapper, responseWrapper);
+			} catch (Exception e) {
+				log.error("Audit log failed | Audit record already exist");
+			} finally {
+				ErrorContextHolder.clear(); //Mandatory
+				responseWrapper.copyBodyToResponse(); //Writes the cached response body to the actual output stream
+			}
+		}
+	}
+}
+
+
+package com.tcs.aadesh.interceptor;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import com.tcs.aadesh.constant.RequestConstants;
+import com.tcs.aadesh.exception.BusinessException;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+@Component
+public class RequestHeaderValidationInterceptor implements HandlerInterceptor {
+
+	@Override
+	public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+
+		String requestReferenceNo = request.getHeader(RequestConstants.Headers.REQ_REF_NO);
+		String sourceId = request.getHeader(RequestConstants.Headers.SOURCE_ID);
+
+		// Request-Reference-No Validation
+		if (requestReferenceNo == null || !requestReferenceNo.matches("^SBI[A-Za-z0-9]{22}$")) {
+			throw new BusinessException("ER015");
+		}
+
+		// Source-Id Validation
+		if (sourceId == null || !sourceId.matches("[a-zA-Z ]+")) {
+			throw new BusinessException("AD003", "Missing or invalid Source Id");
+		}
+
+		if (sourceId.length() > 5) {
+			throw new BusinessException("AD009", "Source Id must not exceed 5 characters");
+		}
+
+		return true;
+	}
+
+}
+
+
+
+
+package com.tcs.aadesh.interceptor;
+
+import org.springframework.stereotype.Component;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import com.tcs.aadesh.annotation.TxnInfo;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+@Component
+public class TransactionInfoInterceptor implements HandlerInterceptor {
+
+	public static final String TXN_NO_HEADER = "X-Internal-Txn-No";
+	public static final String TXN_NAME_HEADER = "X-Internal-Txn-Name";
+
+	@Override
+	public boolean preHandle(
+			HttpServletRequest request, 
+			HttpServletResponse response, 
+			Object handler) {
+
+		if (handler instanceof HandlerMethod handlerMethod) {
+			TxnInfo txnInfo = handlerMethod.getMethodAnnotation(TxnInfo.class);
+
+			if (txnInfo != null) {
+				response.setHeader(TXN_NO_HEADER, txnInfo.txnNo());
+				response.setHeader(TXN_NAME_HEADER, txnInfo.txnName());
+			}
+		}
+
+		return true;
+	}
+}
+
+
+package com.tcs.aadesh.mapper;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Objects;
+import java.util.function.Consumer;
+
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.constant.MandateOperation;
+import com.tcs.aadesh.dto.request.AmendMandateRequestDTO;
+import com.tcs.aadesh.dto.request.CreateMandateRequestDTO;
+import com.tcs.aadesh.dto.response.EisMicroResponse;
+import com.tcs.aadesh.entity.Acmm;
+
+@Component
+public class AcmmMapper {
+
+	// Create request to acmm
+	public Acmm toEntity(CreateMandateRequestDTO request, EisMicroResponse eisMicroResponse) {
+
+		Acmm acmm = new Acmm();
+
+		acmm.setInstNo("003");
+		acmm.setUmrnStatus(MandateOperation.CREATE.getUmrnStatus());
+		acmm.setStatusDate(LocalDate.now());
+
+		acmm.setMandateRecDate(LocalDate.now());
+		acmm.setUnqeRefNo(request.getUnqeRefNo());
+		acmm.setUmrnNo(request.getUmrn());
+		acmm.setDcaIdentifr(request.getDcaIndtfr());
+		acmm.setAmndReason(request.getAmndReason());
+		acmm.setCnclReason(request.getCnclReason());
+		acmm.setCateCode(request.getCateCode());
+		acmm.setProprietry(request.getProprietry());
+		acmm.setFrequency1(request.getFrequency1());
+		acmm.setFrequency2(request.getFrequency2());
+		acmm.setFromDate(request.getStartDate());
+		acmm.setToDate(request.getEndDate());
+		acmm.setAmtInFigures(request.getAmount());
+		acmm.setAmountWords("");
+		acmm.setServiceProvider(request.getServiceProvider());
+		acmm.setUtilityCode(request.getUtilityCode());
+		acmm.setCustName(request.getCustomerName());
+		acmm.setConsumerRefNo(request.getConsumerRefNo());
+		acmm.setSchemeRefNo(request.getSchemeRefNo());
+		acmm.setLandlineNo(request.getLandlineNo());
+		acmm.setMobileNo(request.getMobileNo());
+		acmm.setEmailId(request.getEmailId());
+		acmm.setCustomerAddId(request.getCustomerAddId());
+		acmm.setAcctNo(request.getAcctNo());
+		acmm.setAcctType(request.getAcctType());
+		acmm.setAmtDebitType(request.getDebitType());
+		acmm.setTxnBrchNo(request.getTxnBranchCode());
+		acmm.setLastFileDate(request.getFileDate());
+		acmm.setValidityPeriod(request.getEndDate() != null ? "F" : "U");
+		acmm.setOrgnSource("R");
+		acmm.setCustBank("000");
+		acmm.setManChr(BigDecimal.ZERO);
+		acmm.setDebitFileCount(0);
+		acmm.setBrchCode(eisMicroResponse.getINVM_BRANCH_CODE());
+
+		String sponCode = request.getSponCode();
+		if (sponCode.length() == 11) {
+			acmm.setSponsBankIfsc(sponCode);
+		} else if (sponCode.length() == 9) {
+			acmm.setSponsBankMicr(Long.valueOf(sponCode));
+		}
+
+		String drawCode = request.getDrawCode();
+		if (drawCode != null) {
+			if (drawCode.length() == 11) {
+				acmm.setDrawBankIfsc(drawCode);
+			} else if (drawCode.length() == 9) {
+				acmm.setDrawBankMicr(Integer.valueOf(drawCode));
+			}
+		}
+
+		return acmm;
+	}
+
+	// Amend request to acmm
+	public Acmm toEntity(AmendMandateRequestDTO request, Acmm acmm) {
+
+		acmm.setUmrnStatus(MandateOperation.AMEND.getUmrnStatus());
+		acmm.setStatusDate(LocalDate.now());
+
+		setIfNotNull(acmm::setDcaIdentifr, request.getDcaIndtfr());
+
+		String sponCode = request.getSponCode();
+		if (sponCode != null) {
+			if (sponCode.length() == 11) {
+				acmm.setSponsBankIfsc(sponCode);
+			} else if (sponCode.length() == 9) {
+				acmm.setSponsBankMicr(Long.valueOf(sponCode));
+			}
+		}
+
+		String drawCode = request.getDrawCode();
+		if (drawCode != null) {
+			if (drawCode.length() == 11) {
+				acmm.setDrawBankIfsc(drawCode);
+			} else if (drawCode.length() == 9) {
+				acmm.setDrawBankMicr(Integer.valueOf(drawCode));
+			}
+		}
+
+		setIfNotNull(acmm::setAmndReason, request.getAmndReason());
+		setIfNotNull(acmm::setCateCode, request.getCateCode());
+		setIfNotNull(acmm::setProprietry, request.getProprietry());
+		setIfNotNull(acmm::setFrequency1, request.getFrequency1());
+		setIfNotNull(acmm::setFrequency2, request.getFrequency2());
+		setIfNotNull(acmm::setFromDate, request.getStartDate());
+		setIfNotNull(acmm::setToDate, request.getEndDate());
+		setIfNotNull(acmm::setAmtInFigures, request.getAmount());
+		setIfNotNull(acmm::setServiceProvider, request.getServiceProvider());
+		setIfNotNull(acmm::setUtilityCode, request.getUtilityCode());
+		setIfNotNull(acmm::setCustName, request.getCustomerName());
+		setIfNotNull(acmm::setConsumerRefNo, request.getConsumerRefNo());
+		setIfNotNull(acmm::setSchemeRefNo, request.getSchemeRefNo());
+		setIfNotNull(acmm::setLandlineNo, request.getLandlineNo());
+		setIfNotNull(acmm::setMobileNo, request.getMobileNo());
+		setIfNotNull(acmm::setEmailId, request.getEmailId());
+		setIfNotNull(acmm::setCustomerAddId, request.getCustomerAddId());
+		setIfNotNull(acmm::setAcctType, request.getAcctType());
+		setIfNotNull(acmm::setAmtDebitType, request.getDebitType());
+		setIfNotNull(acmm::setTxnBrchNo, request.getTxnBranchCode());
+
+		if (!Objects.equals(acmm.getFrequency2(), request.getFrequency2())
+				|| !Objects.equals(acmm.getFromDate(), request.getStartDate())) {
+			acmm.setLastFileDate(null);
+			acmm.setDebitFileCount(0);
+		}
+
+		return acmm;
+	}
+
+	private static <T> void setIfNotNull(Consumer<T> setter, T value) {
+		if (value != null) {
+			setter.accept(value);
+		}
+	}
+}
+
+
+package com.tcs.aadesh.repository;
+
+import java.util.Optional;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import com.tcs.aadesh.entity.Acmm;
+import com.tcs.aadesh.entity.AcmmId;
+
+public interface AcmmRepository extends JpaRepository<Acmm, AcmmId> {
+
+	Optional<Acmm> findByInstNoAndUmrnNo(String instNo, String umrnNo);
+
+	void deleteByInstNoAndUmrnNo(String instNo, String umrnNo);
+
+	boolean existsByInstNoAndUmrnNo(String instNo, String umrnNo);
+}
+
+package com.tcs.aadesh.repository;
+
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class ActionRepository {
+
+	private final NamedParameterJdbcTemplate namedJdbcTemplate;
+
+	public ActionRepository(NamedParameterJdbcTemplate namedJdbcTemplate) {
+		super();
+		this.namedJdbcTemplate = namedJdbcTemplate;
+	}
+	
+	public int copyAcmmToAcmh(String instNo, String umrnNo) {
+		String sql = "INSERT INTO acmh ("
+				+ "inst_no, umrn_no, acct_no, unqe_ref_no, spons_bank_ifsc, "
+				+ "spons_bank_micr, utility_code, mandate_rec_date, service_provider, acct_type, " 
+			    + "cust_bank, brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words, " 
+			    + "consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period, from_date, " 
+			    + "to_date, cust_name, customer_add_id, landline_no, mobile_no, email_id, cate_code, " 
+			    + "proprietry, amnd_reason, cncl_reason, txn_brch_no, orgn_source, dca_identifr, " 
+			    + "umrn_status, status_date, amt_debit_type, man_chr, debit_file_count, last_file_date, " 
+			    + "acmh_trn_time, acmh_trn_date) " 
+			    + "SELECT "
+			    + "inst_no, umrn_no, acct_no, unqe_ref_no, spons_bank_ifsc, " 
+			    + "spons_bank_micr, utility_code, mandate_rec_date, service_provider, acct_type, " 
+			    + "cust_bank, brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words, " 
+			    + "consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period, from_date, " 
+			    + "to_date, cust_name, customer_add_id, landline_no, mobile_no, email_id, cate_code, " 
+			    + "proprietry, amnd_reason, cncl_reason, txn_brch_no, orgn_source, dca_identifr, " 
+			    + "umrn_status, status_date, amt_debit_type, man_chr, debit_file_count, last_file_date, " 
+			    + "SYSTIMESTAMP, CURRENT_DATE " 
+			    + "FROM acmm "
+			    + "WHERE inst_no = :instNo "
+			    + "AND	 umrn_no = :umrnNo "
+			    ;
+		
+		MapSqlParameterSource params = new MapSqlParameterSource();
+				params.addValue("instNo", instNo);
+				params.addValue("umrnNo", umrnNo);
+		
+		return namedJdbcTemplate.update(sql, params);
+	}
+
+	public int removeAcmh(String instNo, String umrnNo) {
+		String sql="DELETE FROM acmh \r\n"
+				+ "WHERE ROWID IN (\r\n"
+				+ "    SELECT rid FROM (\r\n"
+				+ "        SELECT ROWID AS rid\r\n"
+				+ "        FROM acmh \r\n"
+				+ "        WHERE inst_no = :instNo \r\n"
+				+ "          AND umrn_no = :umrnNo \r\n"
+				+ "        ORDER BY acmh_trn_time ASC\r\n"
+				+ "    ) \r\n"
+				+ "    WHERE ROWNUM = 1\r\n"
+				+ ")";
+		MapSqlParameterSource params = new MapSqlParameterSource();
+		params.addValue("instNo", instNo);
+		params.addValue("umrnNo", umrnNo);
+		return namedJdbcTemplate.update(sql, params);
+	}
+	
+	public int copyAcmhToAcmm(String instNo, String umrnNo) {
+		String sql = "UPDATE acmm \r\n"
+				+ "SET (\r\n"
+				+ "    unqe_ref_no, spons_bank_ifsc, spons_bank_micr,\r\n"
+				+ "    utility_code, mandate_rec_date, service_provider, acct_type, cust_bank,\r\n"
+				+ "    brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words,\r\n"
+				+ "    consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period,\r\n"
+				+ "    from_date, to_date, cust_name, customer_add_id, landline_no, mobile_no,\r\n"
+				+ "    email_id, cate_code, proprietry, amnd_reason, cncl_reason, txn_brch_no,\r\n"
+				+ "    orgn_source, dca_identifr, umrn_status, status_date, amt_debit_type,\r\n"
+				+ "    man_chr, debit_file_count, last_file_date\r\n"
+				+ ") = (\r\n"
+				+ "    SELECT \r\n"
+				+ "        unqe_ref_no, spons_bank_ifsc, spons_bank_micr,\r\n"
+				+ "        utility_code, mandate_rec_date, service_provider, acct_type, cust_bank,\r\n"
+				+ "        brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words,\r\n"
+				+ "        consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period,\r\n"
+				+ "        from_date, to_date, cust_name, customer_add_id, landline_no, mobile_no,\r\n"
+				+ "        email_id, cate_code, proprietry, amnd_reason, cncl_reason, txn_brch_no,\r\n"
+				+ "        orgn_source, dca_identifr, umrn_status, status_date, amt_debit_type,\r\n"
+				+ "        man_chr, debit_file_count, last_file_date\r\n"
+				+ "    FROM (\r\n"
+				+ "        SELECT *\r\n"
+				+ "        FROM acmh \r\n"
+				+ "        WHERE inst_no = :instNo \r\n"
+				+ "          AND umrn_no = :umrnNo \r\n"
+				+ "        ORDER BY acmh_trn_time ASC\r\n"
+				+ "    )\r\n"
+				+ "    WHERE ROWNUM = 1\r\n"
+				+ ")WHERE inst_no = :instNo \r\n"
+				+ "          AND umrn_no = :umrnNo \r\n";
+		
+		MapSqlParameterSource params = new MapSqlParameterSource();
+				params.addValue("instNo", instNo);
+				params.addValue("umrnNo", umrnNo);
+				
+		return namedJdbcTemplate.update(sql, params);
+	}
+}
+
+
+
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import com.tcs.aadesh.entity.Amount1Card;
+
+public interface Amount1CardRepo extends JpaRepository<Amount1Card, String> {
+
+	@Query("SELECT mandateAmount FROM Amount1Card")
+	String findMandateAmount();
+
+}
+
+
+package com.tcs.aadesh.repository;
+
+import java.time.LocalDateTime;
+import java.util.Optional;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import com.tcs.aadesh.entity.IdempotencyRecord;
+
+import jakarta.transaction.Transactional;
+
+public interface IdempotencyRepository extends JpaRepository<IdempotencyRecord, String> {
+
+	Optional<IdempotencyRecord> findByRequestReferenceNo(String requestReferenceNo);
+
+	@Modifying
+	@Transactional
+	@Query("DELETE FROM IdempotencyRecord i WHERE i.expiresAt < :now")
+	void deleteExpiredRecords(@Param("now") LocalDateTime now);
+}
+
+
+package com.tcs.aadesh.service;
+
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+import org.springframework.web.util.ContentCachingResponseWrapper;
+
+import com.tcs.aadesh.constant.RequestConstants;
+import com.tcs.aadesh.context.AuditContext;
+import com.tcs.aadesh.dto.wrapper.CachedBodyHttpServletRequest;
+import com.tcs.aadesh.entity.EmandateAuditLog;
+import com.tcs.aadesh.entity.EmandateAuditLogId;
+import com.tcs.aadesh.repository.AuditRepository;
+import com.tcs.aadesh.util.ErrorLogger;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+@Service
+public class AuditService {
+	private static final Logger log = LoggerFactory.getLogger(AuditService.class);
+
+	private final AuditRepository auditRepository;
+	private final ObjectMapper objectMapper;
+
+	@Autowired
+	public AuditService(AuditRepository auditRepository, ObjectMapper objectMapper) {
+		this.auditRepository = auditRepository;
+		this.objectMapper = objectMapper;
+	}
+
+	public void saveAuditLog(CachedBodyHttpServletRequest servletRequest,
+			ContentCachingResponseWrapper servletResponse) {
+
+		// 1. Request Body
+		String decryptedRequest = readRequestBody(servletRequest);
+
+		// 2. Response Body
+		String plainResponse = new String(servletResponse.getContentAsByteArray(), StandardCharsets.UTF_8);
+
+		// 3. Extract audit data
+		AuditContext auditContext = extractAuditData(servletRequest, servletResponse, decryptedRequest, plainResponse);
+
+		// 4. Build audit entity
+		EmandateAuditLog auditLog = buildAuditLog(auditContext);
+
+		// 5. Save to DB
+		EmandateAuditLogId auditLogId = new EmandateAuditLogId(auditLog.getRequestReferenceNo(),
+				auditLog.getEntryDate());
+
+		try {
+			if (!auditRepository.existsById(auditLogId)) {
+				auditRepository.save(auditLog);
+				log.info("Audit log saved successfully");
+			} else {
+				log.error("Audit log failure | Audit record already exist");
+			}
+		} catch (IllegalArgumentException | DataAccessException e) {
+			ErrorLogger.log(log, e);
+		}
+	}
+	
+	// ---------------- HELPER FUNCTIONS ----------------
+	private AuditContext extractAuditData(
+			CachedBodyHttpServletRequest servletRequest,
+			ContentCachingResponseWrapper servletResponse, 
+			String decryptedRequest, 
+			String plainResponse) {
+
+		// 1. Extract Request Headers
+		String sourceId = servletRequest.getHeader(RequestConstants.Headers.SOURCE_ID);
+		String requestReferenceNo = servletRequest.getHeader(RequestConstants.Headers.REQ_REF_NO);
+		
+		// 2. Extract Response Headers
+		String txnNo = servletResponse.getHeader(RequestConstants.Headers.TXN_NO);
+		String txnName = servletResponse.getHeader(RequestConstants.Headers.TXN_NAME);
+
+		// 3. Extract Request body fields
+		JsonNode requestNode = objectMapper.readTree(decryptedRequest);
+		String tellerNo = requestNode.path("TELLER_ID").asString(null);
+		String umrnNo = requestNode.path("UMRN").asString(null);
+
+		// 4. Extract Response body fields
+		JsonNode responseNode = objectMapper.readTree(plainResponse);
+		String responseStatus = responseNode.path("status").asString(null);
+
+		JsonNode errorNode = responseNode.path("error");
+		String errorCode = errorNode.path("errorCode").asString(null);
+		String errorDescription = errorNode.path("errorDescription").asString(null);
+
+		// 5. Client IP
+		String clientIp = servletRequest.getHeader("X-Forwarded-For");
+		if (clientIp == null || clientIp.isEmpty() || "unknown".equalsIgnoreCase(clientIp)) {
+		    clientIp = servletRequest.getRemoteAddr();
+		}   
+
+		return new AuditContext(
+				txnNo, 
+				txnName, 
+				responseStatus, 
+				requestReferenceNo,
+				sourceId,
+				tellerNo, 
+				umrnNo,
+				decryptedRequest,
+				plainResponse, 
+				errorCode,
+				errorDescription,
+				clientIp,
+				servletRequest.getRequestURI(),
+				servletRequest.getMethod(),
+				servletResponse.getStatus()
+		);
+	}
+	
+	private EmandateAuditLog buildAuditLog(AuditContext context) {
+		EmandateAuditLog auditLog = new EmandateAuditLog();
+		auditLog.setTxnNo(context.txnNo());
+		auditLog.setTxnName(context.txnName());
+		auditLog.setResponseStatus(context.responseStatus());
+		auditLog.setRequestReferenceNo(context.requestReferenceNo());
+		auditLog.setSourceId(context.sourceId());
+		auditLog.setTellerNo(context.tellerNo());
+		auditLog.setUmrnNo(context.umrnNo());
+		auditLog.setRequestBody(context.requestBody());
+		auditLog.setResponseBody(context.responseBody());
+		auditLog.setErrorCode(context.errorCode());
+		auditLog.setErrorDescription(context.errorDescription());
+		auditLog.setClientIp(context.clientIp());
+		auditLog.setRequestUri(context.requestUri());
+		auditLog.setHttpMethod(context.httpMethod());
+		auditLog.setHttpStatus(context.httpStatusCode());
+		auditLog.setEntryDate(LocalDateTime.now());
+
+		System.out.println("AuditLog: " + auditLog.toString());
+
+		return auditLog;
+	}
+
+	private String readRequestBody(CachedBodyHttpServletRequest servletRequest) {
+		return new String(servletRequest.getCachedBody(), StandardCharsets.UTF_8);
+	}
+}
+
+package com.tcs.aadesh.repository;
+
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class ActionRepository {
+
+	private final NamedParameterJdbcTemplate namedJdbcTemplate;
+
+	public ActionRepository(NamedParameterJdbcTemplate namedJdbcTemplate) {
+		super();
+		this.namedJdbcTemplate = namedJdbcTemplate;
+	}
+	
+	public int copyAcmmToAcmh(String instNo, String umrnNo) {
+		String sql = "INSERT INTO acmh ("
+				+ "inst_no, umrn_no, acct_no, unqe_ref_no, spons_bank_ifsc, "
+				+ "spons_bank_micr, utility_code, mandate_rec_date, service_provider, acct_type, " 
+			    + "cust_bank, brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words, " 
+			    + "consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period, from_date, " 
+			    + "to_date, cust_name, customer_add_id, landline_no, mobile_no, email_id, cate_code, " 
+			    + "proprietry, amnd_reason, cncl_reason, txn_brch_no, orgn_source, dca_identifr, " 
+			    + "umrn_status, status_date, amt_debit_type, man_chr, debit_file_count, last_file_date, " 
+			    + "acmh_trn_time, acmh_trn_date) " 
+			    + "SELECT "
+			    + "inst_no, umrn_no, acct_no, unqe_ref_no, spons_bank_ifsc, " 
+			    + "spons_bank_micr, utility_code, mandate_rec_date, service_provider, acct_type, " 
+			    + "cust_bank, brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words, " 
+			    + "consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period, from_date, " 
+			    + "to_date, cust_name, customer_add_id, landline_no, mobile_no, email_id, cate_code, " 
+			    + "proprietry, amnd_reason, cncl_reason, txn_brch_no, orgn_source, dca_identifr, " 
+			    + "umrn_status, status_date, amt_debit_type, man_chr, debit_file_count, last_file_date, " 
+			    + "SYSTIMESTAMP, CURRENT_DATE " 
+			    + "FROM acmm "
+			    + "WHERE inst_no = :instNo "
+			    + "AND	 umrn_no = :umrnNo "
+			    ;
+		
+		MapSqlParameterSource params = new MapSqlParameterSource();
+				params.addValue("instNo", instNo);
+				params.addValue("umrnNo", umrnNo);
+		
+		return namedJdbcTemplate.update(sql, params);
+	}
+
+	public int removeAcmh(String instNo, String umrnNo) {
+		String sql="DELETE FROM acmh \r\n"
+				+ "WHERE ROWID IN (\r\n"
+				+ "    SELECT rid FROM (\r\n"
+				+ "        SELECT ROWID AS rid\r\n"
+				+ "        FROM acmh \r\n"
+				+ "        WHERE inst_no = :instNo \r\n"
+				+ "          AND umrn_no = :umrnNo \r\n"
+				+ "        ORDER BY acmh_trn_time ASC\r\n"
+				+ "    ) \r\n"
+				+ "    WHERE ROWNUM = 1\r\n"
+				+ ")";
+		MapSqlParameterSource params = new MapSqlParameterSource();
+		params.addValue("instNo", instNo);
+		params.addValue("umrnNo", umrnNo);
+		return namedJdbcTemplate.update(sql, params);
+	}
+	
+	public int copyAcmhToAcmm(String instNo, String umrnNo) {
+		String sql = "UPDATE acmm \r\n"
+				+ "SET (\r\n"
+				+ "    unqe_ref_no, spons_bank_ifsc, spons_bank_micr,\r\n"
+				+ "    utility_code, mandate_rec_date, service_provider, acct_type, cust_bank,\r\n"
+				+ "    brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words,\r\n"
+				+ "    consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period,\r\n"
+				+ "    from_date, to_date, cust_name, customer_add_id, landline_no, mobile_no,\r\n"
+				+ "    email_id, cate_code, proprietry, amnd_reason, cncl_reason, txn_brch_no,\r\n"
+				+ "    orgn_source, dca_identifr, umrn_status, status_date, amt_debit_type,\r\n"
+				+ "    man_chr, debit_file_count, last_file_date\r\n"
+				+ ") = (\r\n"
+				+ "    SELECT \r\n"
+				+ "        unqe_ref_no, spons_bank_ifsc, spons_bank_micr,\r\n"
+				+ "        utility_code, mandate_rec_date, service_provider, acct_type, cust_bank,\r\n"
+				+ "        brch_code, draw_bank_ifsc, draw_bank_micr, amt_in_figures, amount_words,\r\n"
+				+ "        consumer_ref_no, scheme_ref_no, frequency1, frequency2, validity_period,\r\n"
+				+ "        from_date, to_date, cust_name, customer_add_id, landline_no, mobile_no,\r\n"
+				+ "        email_id, cate_code, proprietry, amnd_reason, cncl_reason, txn_brch_no,\r\n"
+				+ "        orgn_source, dca_identifr, umrn_status, status_date, amt_debit_type,\r\n"
+				+ "        man_chr, debit_file_count, last_file_date\r\n"
+				+ "    FROM (\r\n"
+				+ "        SELECT *\r\n"
+				+ "        FROM acmh \r\n"
+				+ "        WHERE inst_no = :instNo \r\n"
+				+ "          AND umrn_no = :umrnNo \r\n"
+				+ "        ORDER BY acmh_trn_time ASC\r\n"
+				+ "    )\r\n"
+				+ "    WHERE ROWNUM = 1\r\n"
+				+ ")WHERE inst_no = :instNo \r\n"
+				+ "          AND umrn_no = :umrnNo \r\n";
+		
+		MapSqlParameterSource params = new MapSqlParameterSource();
+				params.addValue("instNo", instNo);
+				params.addValue("umrnNo", umrnNo);
+				
+		return namedJdbcTemplate.update(sql, params);
+	}
+}
+
+
+
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import com.tcs.aadesh.entity.Amount1Card;
+
+public interface Amount1CardRepo extends JpaRepository<Amount1Card, String> {
+
+	@Query("SELECT mandateAmount FROM Amount1Card")
+	String findMandateAmount();
+
+}
+
+
+
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import com.tcs.aadesh.entity.BounceCountCard;
+
+public interface BounceCountCardRepo extends JpaRepository<BounceCountCard, String> {
+
+	@Query("SELECT dishonourCounter FROM BounceCountCard")
+	String findDishonourCounter();
+}
+
+
+package com.tcs.aadesh.service;
+
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.SignatureException;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.management.InstanceNotFoundException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.dto.EncryptedEisMicroPayload;
+import com.tcs.aadesh.dto.request.EisMicroRequest;
+import com.tcs.aadesh.exception.UnexpectedException;
+import com.tcs.aadesh.util.AesEncryptionUtility;
+import com.tcs.aadesh.util.ErrorLogger;
+
+import tools.jackson.databind.json.JsonMapper;
+
+@Service
+public class EisMicroEncryptionService {
+	private static Logger log = LoggerFactory.getLogger(EisMicroEncryptionService.class);
+
+	private final AesEncryptionUtility encryptionUtility;
+
+	private final JsonMapper jsonMapper;
+
+	@Autowired
+	public EisMicroEncryptionService(AesEncryptionUtility encryptionUtility) {
+		super();
+		this.encryptionUtility = encryptionUtility;
+		this.jsonMapper = JsonMapper.builder().build();
+
+	}
+
+	public EncryptedEisMicroPayload createEncryptedRequest(String acctNo) {
+		Map<String, Object> queryParams = new HashMap<>();
+		String refNo = generateReqRefNumber();
+
+		EncryptedEisMicroPayload eisMicroPayload = new EncryptedEisMicroPayload();
+
+		try {
+			String aesKey = generateSecureRandomKey(32);
+
+			queryParams.put("SOURCE_ID", "HA");
+			queryParams.put("ACCOUNT_NUMBER", acctNo);
+
+			// Convert Map to JSON String using Jackson
+			String jsonParams = jsonMapper.writeValueAsString(queryParams);
+
+			EisMicroRequest eisMicroRequest = new EisMicroRequest();
+			eisMicroRequest.setREQUEST_REFERENCE_NUMBER(refNo);
+			eisMicroRequest.setREQUEST(encryptionUtility.eisEncrypt(jsonParams, aesKey));
+			eisMicroRequest.setDIGI_SIGN(encryptionUtility.sign(jsonParams).replaceAll("\r\n|\n", ""));
+
+			eisMicroPayload.setEisMicroRequest(eisMicroRequest);
+			eisMicroPayload.setAesKey(aesKey);
+			
+			
+			System.out.println("eisMicroRequest: "+ eisMicroRequest);
+
+
+		} catch (IOException | InstanceNotFoundException | InvalidKeyException | ClassNotFoundException
+				| NoSuchMethodException | InvocationTargetException | InvalidAlgorithmParameterException
+				| NoSuchAlgorithmException | SignatureException | InterruptedException | NoSuchPaddingException
+				| IllegalBlockSizeException | BadPaddingException e) {
+
+			ErrorLogger.log(log, "Error occured during generating request", e);
+			throw new UnexpectedException();
+		}
+		
+
+		return eisMicroPayload;
+	}
+
+	public String generateSecureRandomKey(int length) {
+		String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+		SecureRandom secureRandom = new SecureRandom();
+		byte[] randomBytes = new byte[length];
+		secureRandom.nextBytes(randomBytes);
+
+		StringBuilder sb = new StringBuilder();
+		for (byte b : randomBytes) {
+			sb.append(chars.charAt(((int) b & 0xff) % chars.length()));
+		}
+		return sb.toString();
+	}
+
+	public String generateReqRefNumber() {
+		String sourceId = "HA";
+		Calendar calendar = Calendar.getInstance();
+		int dayOfTheYear = calendar.get(Calendar.DAY_OF_YEAR);
+		String zeroPaddedDayOfTheYear = String.format("%03d", dayOfTheYear);
+		Date date = new Date();
+		SimpleDateFormat SimpleDateFormat = new SimpleDateFormat("yy-hh-mm-ss-SSS");
+		String parse = SimpleDateFormat.format(date);
+		int i = new SecureRandom().nextInt(900000) + 100000;
+		String[] split = parse.split("-");
+		return ("SBI" + sourceId + split[0] + zeroPaddedDayOfTheYear + split[1] + split[2] + split[3] + split[4] + i)
+				.toString();
+	}
+
+}
+
+
+package com.tcs.aadesh.service;
+
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.util.Map;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.management.InstanceNotFoundException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+
+import com.tcs.aadesh.dto.request.EisMicroRequest;
+import com.tcs.aadesh.util.AesEncryptionUtility;
+
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
+
+@Service
+public class EisMicroRestClient {
+
+	private static final Logger logger = LoggerFactory.getLogger(EisMicroRestClient.class);
+
+	private final RestClient restClient;
+	private final AesEncryptionUtility aesEncryptionUtility;
+	private final JsonMapper jsonMapper;
+
+	@Autowired
+	public EisMicroRestClient(RestClient restClient, AesEncryptionUtility aesEncryptionUtility) {
+		this.restClient = restClient;
+		this.aesEncryptionUtility = aesEncryptionUtility;
+		this.jsonMapper = JsonMapper.builder().build();
+	}
+
+	public String callApi(String url, EisMicroRequest requestBean, String key)
+			throws InstanceNotFoundException, InvalidKeyException, ClassNotFoundException, NoSuchMethodException,
+			InvocationTargetException, InvalidAlgorithmParameterException, NoSuchAlgorithmException,
+			NoSuchPaddingException, IllegalBlockSizeException, BadPaddingException, IOException, InterruptedException {
+
+		// 1. Encrypt the session key
+		String accessToken = aesEncryptionUtility.rsaEncrypt(key);
+
+		// 2. Create request entity (Serialize using Jackson)
+		String jsonPayload = jsonMapper.writeValueAsString(requestBean);
+
+		// 3. Make the call
+		ResponseEntity<String> response = restClient
+				.post()
+				.uri(url)
+				.headers(headers -> {
+						headers.setContentType(MediaType.APPLICATION_JSON);
+						headers.set("AccessToken", accessToken);
+					})
+				.body(jsonPayload)
+				.retrieve()
+				.toEntity(String.class);
+
+		Map<String, String> apiResponseMap = jsonMapper.readValue(response.getBody(),
+				new TypeReference<Map<String, String>>() {
+				});
+		
+		logger.info("EIS-MICRO REQUEST_REFERENCE_NUMBER: {}", apiResponseMap.get("REQUEST_REFERENCE_NUMBER"));
+
+		String encryptedResponsePayload = apiResponseMap.get("RESPONSE");
+
+		if (encryptedResponsePayload != null) {
+			return aesEncryptionUtility.aesDecrypt(encryptedResponsePayload, key);
+		} else {
+			logger.error("RESPONSE parameter not found in Eis-Microservice response");
+			return null;
+		}
+	}
+}
+
+
+
+package com.tcs.aadesh.service;
+
+import java.io.IOException;
+import java.security.GeneralSecurityException;
+
+import javax.management.InstanceNotFoundException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.dto.EncryptedEisMicroPayload;
+import com.tcs.aadesh.dto.response.EisMicroResponse;
+import com.tcs.aadesh.exception.BusinessException;
+import com.tcs.aadesh.util.ErrorLogger;
+
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.exc.JsonNodeException;
+
+@Service
+public class EisMicroService {
+	private static Logger logger = LoggerFactory.getLogger(EisMicroService.class);
+
+	private final String microServiceUri;
+	private final EisMicroEncryptionService eisMicroEncryptionService;
+	private final EisMicroRestClient eisMicroRestClient;
+	private final ObjectMapper objectMapper;
+
+	@Autowired
+	public EisMicroService(@Value("${microservice.uri}") String microServiceUri,
+			EisMicroEncryptionService eisMicroEncryptionService, EisMicroRestClient eisMicroRestClient,
+			ObjectMapper objectMapper) {
+		this.microServiceUri = microServiceUri;
+		this.eisMicroEncryptionService = eisMicroEncryptionService;
+		this.eisMicroRestClient = eisMicroRestClient;
+		this.objectMapper = objectMapper;
+	}
+
+	public EisMicroResponse callMicroServices(String acctNo) {
+		logger.info("REST call to eis-microservice initiated...");
+
+		EncryptedEisMicroPayload encryptedEisMicroPayload = eisMicroEncryptionService.createEncryptedRequest(acctNo);
+
+		String eisMicroResponseStr;
+		try {
+			eisMicroResponseStr = eisMicroRestClient.callApi(microServiceUri,
+					encryptedEisMicroPayload.getEisMicroRequest(), encryptedEisMicroPayload.getAesKey());
+
+			logger.info("DECRYPTED EIS-MICRO RESPONSE: {}", eisMicroResponseStr);
+
+			if (eisMicroResponseStr == null || eisMicroResponseStr.isEmpty()) {
+				throw new BusinessException("AD002");
+			}
+		} catch (IOException | GeneralSecurityException | ReflectiveOperationException | InterruptedException
+				| InstanceNotFoundException e) {
+			ErrorLogger.log(logger, "REST call to eis-microservice failed!", e);
+			throw new BusinessException("AD005");
+		}
+
+		EisMicroResponse eisMicroResponse = null;
+		try {
+			eisMicroResponse = objectMapper.readValue(eisMicroResponseStr, EisMicroResponse.class);
+		} catch (JsonNodeException e) {
+			ErrorLogger.log(logger, e);
+			throw new BusinessException("AD002");
+		}
+
+		return eisMicroResponse;
+	}
+}
+
+
+package com.tcs.aadesh.service;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.util.Base64;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.tcs.aadesh.dto.response.ApiResponse;
+import com.tcs.aadesh.entity.IdempotencyRecord;
+import com.tcs.aadesh.exception.BusinessException;
+import com.tcs.aadesh.exception.UnexpectedException;
+import com.tcs.aadesh.repository.IdempotencyRepository;
+import com.tcs.aadesh.util.ErrorLogger;
+
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.exc.JsonNodeException;
+
+@Service
+public class IdempotencyService {
+
+	private static final Logger log = LoggerFactory.getLogger(IdempotencyService.class);
+
+	private final int ttlHours;
+	private final ObjectMapper objectMapper;
+	private final IdempotencyRepository idempotencyRepository;
+
+	@Autowired
+	public IdempotencyService(
+			@Value("${idempotency.ttl.hours}") int ttlHours,
+			IdempotencyRepository idempotencyRepository, 
+			ObjectMapper objectMapper
+			) {
+		super();
+		this.ttlHours = ttlHours;
+		this.objectMapper = objectMapper;
+		this.idempotencyRepository = idempotencyRepository;
+	}
+
+	@Transactional
+	public <T> Optional<ApiResponse<?>> check(String requestReferenceNo, Object requestBody, Class<T> responseType) {
+
+		String currentHash = hash(requestBody);
+
+		Optional<IdempotencyRecord> existing = idempotencyRepository.findByRequestReferenceNo(requestReferenceNo)
+				.filter(r -> !r.isExpired());
+
+		if (existing.isPresent()) {
+			IdempotencyRecord record = existing.get();
+
+			if (!currentHash.equals(record.getRequestHash())) {
+				log.warn("Request ref number already used with different request body");
+				throw new BusinessException("AD004");
+			}
+
+			if (record.isSuccess()) {
+				// return cached response
+				log.info("Idempotent hit — returning cached response");
+				try {
+					ApiResponse<?> cachedResponse = (ApiResponse<?>) objectMapper.readValue(record.getResponseBody(),
+							responseType);
+					return Optional.of(cachedResponse);
+				} catch (JsonNodeException e) {
+					ErrorLogger.log(log, "Failed to deserialize cached response", e);
+					throw new UnexpectedException();
+				}
+			}
+
+			if (record.isProcessing()) {
+				log.warn("Request with this reference number is already being processed");
+				throw new BusinessException("AD004");
+			}
+		}
+
+		// insert PROCESSING — prevents concurrent duplicates
+		try {
+			idempotencyRepository.save(IdempotencyRecord.processing(requestReferenceNo, currentHash, ttlHours));
+		} catch (DataIntegrityViolationException ex) {
+			ErrorLogger.log(log, "Request with this reference number is already being processed", ex);
+			throw new BusinessException("AD004");
+		}
+
+		// empty = no cached response, proceed with business logic
+		return Optional.empty();
+	}
+
+	private String hash(Object requestBody) {
+		try {
+			String json = objectMapper.writeValueAsString(requestBody);
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			byte[] hashBytes = digest.digest(json.getBytes(StandardCharsets.UTF_8));
+			return Base64.getEncoder().encodeToString(hashBytes);
+		} catch (JsonNodeException | NoSuchAlgorithmException e) {
+			ErrorLogger.log(log, "Request hashing failed", e);
+			throw new UnexpectedException();
+		}
+	}
+
+	@Transactional
+	public void markSuccess(String requestReferenceNo, Object response) {
+		try {
+			String responseJson = objectMapper.writeValueAsString(response);
+			idempotencyRepository.findByRequestReferenceNo(requestReferenceNo).ifPresent(record -> {
+				record.markSuccess(responseJson, 200);
+				idempotencyRepository.save(record);
+				log.info("Marked SUCCESS");
+			});
+		} catch (JsonNodeException e) {
+			ErrorLogger.log(log, "Failed to mark SUCCESS", e);
+			throw new UnexpectedException();
+		}
+	}
+
+	@Scheduled(cron = "0 0 0 * * *")
+	@Transactional
+	public void cleanupExpiredRecords() {
+		idempotencyRepository.deleteExpiredRecords(LocalDateTime.now());
+		log.info("Expired idempotency records cleaned up");
+	}
+}
+
+
+
+package com.tcs.aadesh.service;
+
+import java.time.LocalDate;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.yaml.snakeyaml.constructor.DuplicateKeyException;
+
+import com.tcs.aadesh.constant.AppConstants;
+import com.tcs.aadesh.constant.MandateOperation;
+import com.tcs.aadesh.dto.request.AmendMandateRequestDTO;
+import com.tcs.aadesh.dto.request.CancelMandateRequestDTO;
+import com.tcs.aadesh.dto.request.CreateMandateRequestDTO;
+import com.tcs.aadesh.dto.request.RevokeMandateRequestDTO;
+import com.tcs.aadesh.dto.request.StopMandateRequestDTO;
+import com.tcs.aadesh.dto.response.ApiResponse;
+import com.tcs.aadesh.dto.response.EisMicroResponse;
+import com.tcs.aadesh.entity.Acmm;
+import com.tcs.aadesh.entity.MrLnft;
+import com.tcs.aadesh.exception.TransactionFailedException;
+import com.tcs.aadesh.mapper.AcmmMapper;
+import com.tcs.aadesh.repository.AcmmRepository;
+import com.tcs.aadesh.repository.ActionRepository;
+import com.tcs.aadesh.repository.MrLnftRepository;
+import com.tcs.aadesh.util.ErrorLogger;
+import com.tcs.aadesh.validation.AmendMandateValidator;
+import com.tcs.aadesh.validation.CancelMandateValidator;
+import com.tcs.aadesh.validation.CreateMandateValidator;
+import com.tcs.aadesh.validation.RevokeMandateValidator;
+import com.tcs.aadesh.validation.StopMandateValidator;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+
+@Service
+public class MandateService {
+	private static Logger log = LoggerFactory.getLogger(MandateService.class);
+
+	private final AcmmMapper acmmMapper;
+	private final AcmmRepository acmmRepository;
+	private final MrLnftRepository mrLnftRepository;
+	private final ActionRepository actionRepository;
+	private final CreateMandateValidator createMandateValidator;
+	private final AmendMandateValidator amendMandateValidator;
+	private final CancelMandateValidator cancelMandateValidator;
+	private final StopMandateValidator stopMandateValidator;
+	private final RevokeMandateValidator revokeMandateValidator;
+	private final IdempotencyService idempotencyService;
+
+	@Autowired
+	public MandateService(AcmmMapper acmmMapper, AcmmRepository acmmRepository, MrLnftRepository mrLnftRepository,
+			ActionRepository actionRepository, CreateMandateValidator createMandateValidator,
+			AmendMandateValidator amendMandateValidator, CancelMandateValidator cancelMandateValidator,
+			StopMandateValidator stopMandateValidator, RevokeMandateValidator revokeMandateValidator,
+			IdempotencyService idempotencyService) {
+		super();
+		this.acmmMapper = acmmMapper;
+		this.acmmRepository = acmmRepository;
+		this.mrLnftRepository = mrLnftRepository;
+		this.actionRepository = actionRepository;
+		this.createMandateValidator = createMandateValidator;
+		this.amendMandateValidator = amendMandateValidator;
+		this.cancelMandateValidator = cancelMandateValidator;
+		this.stopMandateValidator = stopMandateValidator;
+		this.revokeMandateValidator = revokeMandateValidator;
+		this.idempotencyService = idempotencyService;
+	}
+
+	@Transactional
+	public ApiResponse<?> createMandate(@Valid CreateMandateRequestDTO request, HttpServletRequest httpRequest) {
+
+		String requestReferenceNo = httpRequest.getHeader("X-Request-Reference-No");
+		String sourceId = httpRequest.getHeader("X-Source-Id");
+
+		ApiResponse<String> success = null;
+
+		try {
+			// 0. Check Idempotency
+			Optional<ApiResponse<?>> cachedResponse = idempotencyService.check(requestReferenceNo, request,
+					ApiResponse.class);
+
+			if (cachedResponse.isPresent()) {
+				return cachedResponse.get();
+			}
+
+			// 1. Business validations
+			EisMicroResponse eisMicroResponse = createMandateValidator.validateAndGetEisMicroResponse(request);
+
+			// 2. Insert into ACMM
+			if (!acmmRepository.existsByInstNoAndUmrnNo(AppConstants.INST_NO.getValue(), request.getUmrn())) {
+				Acmm newAcmm = acmmMapper.toEntity(request, eisMicroResponse);
+				acmmRepository.save(newAcmm);
+			} else {
+				throw new TransactionFailedException("Record already present in ACMM");
+			}
+
+			// 3. Insert into MR_LNFT
+			insertIntoMrLnft(requestReferenceNo, request.getTxnBranchCode(), request.getAcctNo(), request.getUmrn(),
+					request.getTranType(), request.getTellerId());
+
+			success = ApiResponse.success(requestReferenceNo, sourceId, "Mandate created successfully");
+
+			idempotencyService.markSuccess(requestReferenceNo, success);
+
+		} catch (TransactionFailedException | DataAccessException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("Database transaction failed");
+		}
+
+		return success;
+	}
+
+	@Transactional
+	public ApiResponse<?> amendMandate(@Valid AmendMandateRequestDTO request, HttpServletRequest httpRequest) {
+
+		String requestReferenceNo = httpRequest.getHeader("X-Request-Reference-No");
+		String sourceId = httpRequest.getHeader("X-Source-Id");
+
+		ApiResponse<String> success = null;
+
+		// 0. Check Idempotency
+		Optional<ApiResponse<?>> cachedResponse = idempotencyService.check(requestReferenceNo, request,
+				ApiResponse.class);
+
+		if (cachedResponse.isPresent()) {
+			return cachedResponse.get();
+		}
+
+		// 1. Business validations
+		Acmm acmm = amendMandateValidator.validateAmendRequest(request);
+
+		// 2. Copy ACMM to ACMH
+		try {
+			int rowsCopied = actionRepository.copyAcmmToAcmh(acmm.getInstNo(), acmm.getUmrnNo());
+
+			if (rowsCopied == 0) {
+				log.warn("Failed to copy ACMM into ACMH: No rows affected for UmrnNo: {}", acmm.getUmrnNo());
+				throw new TransactionFailedException("Failed to copy ACMM row into ACMH");
+			}
+
+			log.info("Copied ACMM into ACMH successfully: {} rows processed", rowsCopied);
+
+			// 3. Update ACMM
+			Acmm updatedAcmm = acmmMapper.toEntity(request, acmm);
+
+			acmmRepository.save(updatedAcmm);
+
+			// 4. Insert into MR_LNFT
+			insertIntoMrLnft(requestReferenceNo, acmm.getTxnBrchNo(), acmm.getAcctNo(), acmm.getUmrnNo(),
+					request.getTranType(), request.getTellerId());
+
+			success = ApiResponse.success(requestReferenceNo, sourceId, "Mandate amended successfully");
+
+			idempotencyService.markSuccess(requestReferenceNo, success);
+
+		} catch (TransactionFailedException | DataAccessException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("Database transaction failed");
+		}
+
+		return success;
+	}
+
+	@Transactional
+	public ApiResponse<?> cancelMandate(@Valid CancelMandateRequestDTO request, HttpServletRequest httpRequest) {
+
+		String requestReferenceNo = httpRequest.getHeader("X-Request-Reference-No");
+		String sourceId = httpRequest.getHeader("X-Source-Id");
+
+		System.out.println("requestReferenceNo -> " + requestReferenceNo);
+		System.out.println("sourceId -> " + sourceId);
+
+		ApiResponse<String> success = null;
+
+		// 0. Check Idempotency
+		Optional<ApiResponse<?>> cachedResponse = idempotencyService.check(requestReferenceNo, request,
+				ApiResponse.class);
+
+		if (cachedResponse.isPresent()) {
+			return cachedResponse.get();
+		}
+
+		// 1. Business validations
+		Acmm acmm = cancelMandateValidator.validateCancelRequest(request);
+
+		// 2. Copy ACMM to ACMH
+		try {
+			int rowsCopied = actionRepository.copyAcmmToAcmh(acmm.getInstNo(), acmm.getUmrnNo());
+
+			if (rowsCopied == 0) {
+				log.warn("Failed to copy ACMM into ACMH: No rows affected for UmrnNo: {}", acmm.getUmrnNo());
+				throw new TransactionFailedException("Failed to copy ACMM row into ACMH");
+			}
+
+			log.info("Copied ACMM into ACMH successfully: {} rows processed", rowsCopied);
+
+			// 3. Update ACMM
+			acmm.setUmrnStatus(MandateOperation.CANCEL.getUmrnStatus());
+			acmm.setCnclReason(request.getCnclReason());
+			acmm.setStatusDate(LocalDate.now());
+
+			acmmRepository.save(acmm);
+
+			// 4. Insert into MR_LNFT
+			insertIntoMrLnft(requestReferenceNo, acmm.getTxnBrchNo(), acmm.getAcctNo(), acmm.getUmrnNo(),
+					request.getTranType(), request.getTellerId());
+
+			success = ApiResponse.success(requestReferenceNo, sourceId, "Mandate cancelled successfully");
+
+			idempotencyService.markSuccess(requestReferenceNo, success);
+
+		} catch (TransactionFailedException | DataAccessException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("Database transaction failed");
+		}
+
+		return success;
+	}
+
+	@Transactional
+	public ApiResponse<?> stopMandate(@Valid StopMandateRequestDTO request, HttpServletRequest httpRequest) {
+
+		String requestReferenceNo = httpRequest.getHeader("X-Request-Reference-No");
+		String sourceId = httpRequest.getHeader("X-Source-Id");
+
+		ApiResponse<String> success = null;
+
+		// 0. Check Idempotency
+		Optional<ApiResponse<?>> cachedResponse = idempotencyService.check(requestReferenceNo, request,
+				ApiResponse.class);
+
+		if (cachedResponse.isPresent()) {
+			return cachedResponse.get();
+		}
+
+		// 1. Business validations
+		Acmm acmm = stopMandateValidator.validateStopRequest(request);
+
+		// 2. Copy ACMM to ACMH
+		try {
+			int rowsCopied = actionRepository.copyAcmmToAcmh(acmm.getInstNo(), acmm.getUmrnNo());
+
+			if (rowsCopied == 0) {
+				log.warn("Failed to copy ACMM into ACMH: No rows affected for UmrnNo: {}", acmm.getUmrnNo());
+				throw new TransactionFailedException("Failed to copy ACMM row into ACMH");
+			}
+
+			log.info("Copied ACMM into ACMH successfully: {} rows processed", rowsCopied);
+
+			// 3. Update ACMM
+			acmm.setUmrnStatus(MandateOperation.STOP.getUmrnStatus());
+			acmm.setStatusDate(LocalDate.now());
+
+			acmmRepository.save(acmm);
+
+			// 4. Insert into MR_LNFT
+			insertIntoMrLnft(requestReferenceNo, acmm.getTxnBrchNo(), acmm.getAcctNo(), acmm.getUmrnNo(),
+					request.getTranType(), request.getTellerId());
+
+			success = ApiResponse.success(requestReferenceNo, sourceId, "Mandate stopped successfully");
+
+			idempotencyService.markSuccess(requestReferenceNo, success);
+
+		} catch (TransactionFailedException | DataAccessException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("Database transaction failed");
+		}
+		return success;
+
+	}
+
+	@Transactional
+	public ApiResponse<?> revokeMandate(@Valid RevokeMandateRequestDTO request, HttpServletRequest httpRequest) {
+
+		String requestReferenceNo = httpRequest.getHeader("X-Request-Reference-No");
+		String sourceId = httpRequest.getHeader("X-Source-Id");
+
+		ApiResponse<String> success = null;
+
+		// 0. Check Idempotency
+		Optional<ApiResponse<?>> cachedResponse = idempotencyService.check(requestReferenceNo, request,
+				ApiResponse.class);
+
+		if (cachedResponse.isPresent()) {
+			return cachedResponse.get();
+		}
+
+		// 1. Business validations
+		Acmm acmm = revokeMandateValidator.validateRevokeRequest(request);
+
+		// 2. Update ACMM
+		try {
+			int rowsCopied = actionRepository.copyAcmmToAcmh(acmm.getInstNo(), acmm.getUmrnNo());
+
+			if (rowsCopied == 0) {
+				log.warn("Failed to copy ACMM into ACMH: No rows affected for UmrnNo: {}", acmm.getUmrnNo());
+				throw new TransactionFailedException("Failed to copy ACMM row into ACMH");
+			}
+
+			log.info("Copied ACMM into ACMH successfully: {} rows processed", rowsCopied);
+
+			acmm.setUmrnStatus(MandateOperation.REVOKE.getUmrnStatus());
+			acmm.setStatusDate(LocalDate.now());
+
+			acmmRepository.save(acmm);
+
+			// 3. Insert into MR_LNFT
+			insertIntoMrLnft(requestReferenceNo, acmm.getTxnBrchNo(), acmm.getAcctNo(), acmm.getUmrnNo(),
+					request.getTranType(), request.getTellerId());
+
+			success = ApiResponse.success(requestReferenceNo, sourceId, "Mandate revoked successfully");
+
+			idempotencyService.markSuccess(requestReferenceNo, success);
+
+		} catch (TransactionFailedException | DataAccessException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("Database transaction failed");
+		}
+
+		return success;
+	}
+
+	// ===== HELPER FUNCTIONS ===================================================
+	private void insertIntoMrLnft(String requestReferenceNo, String txnBranchCode, String accNo, String umrn,
+			String tranType, String tellerIdStr) {
+		try {
+			Long tellerId = Long.valueOf(tellerIdStr);
+
+			MrLnft mrLnft = new MrLnft();
+			mrLnft.setStatus("47");
+			mrLnft.setRequestReferenceNo(requestReferenceNo);
+			mrLnft.setBranchCode(txnBranchCode);
+			mrLnft.setAccountNumber(accNo);
+			mrLnft.setAchUmrn(umrn);
+			mrLnft.setTxnDate(LocalDate.now());
+			mrLnft.setAction(tranType);
+			mrLnft.setTellerId(String.valueOf(tellerId));
+			mrLnft.setAuthId(String.valueOf(tellerId));
+
+			mrLnftRepository.saveAndFlush(mrLnft);
+		} catch (DuplicateKeyException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("Duplicate record: MrLnft row already exists.");
+		} catch (DataAccessException | IllegalArgumentException e) {
+			ErrorLogger.log(log, e);
+			throw new TransactionFailedException("MrLnft insert failed");
+		}
+	}
+}
+
+
+
+package com.tcs.aadesh.util;
+
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.KeyFactory;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Security;
+import java.security.Signature;
+import java.security.SignatureException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Arrays;
+import java.util.Base64;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import javax.management.InstanceNotFoundException;
+
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import jakarta.annotation.PostConstruct;
+
+@Component
+public class AesEncryptionUtility {
+	private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(AesEncryptionUtility.class);
+	private static final String AES_TRANSFORMATION = "AES/GCM/NoPadding";
+	private static final String RSA_TRANSFORMATION = "RSA/ECB/OAEPPadding";
+	private static final String SIGNATURE_ALGORITHM = "SHA256withRSA";
+
+	private final String privateKeyPath;
+	private final String certPath;
+
+	private PrivateKey eisPrivateKey;
+	private PublicKey eisPublicKey;
+
+	public AesEncryptionUtility(@Value("${micro.privatekey.path}") String privateKeyPath,
+			@Value("${micro.publickey.path}") String certPath) {
+		this.privateKeyPath = privateKeyPath;
+		this.certPath = certPath;
+	}
+
+	@PostConstruct
+	public void init() throws IOException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException,
+			InstanceNotFoundException, InvalidAlgorithmParameterException, InterruptedException,
+			NoSuchAlgorithmException, InvalidKeySpecException, CertificateException {
+		LOGGER.info("Initializing AESEncryptionUtility...");
+		Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+
+		// Load private key once
+		byte[] keyBytes = Files.readAllBytes(Paths.get(privateKeyPath));
+		String privateKeyPEM = new String(keyBytes, StandardCharsets.UTF_8).replaceAll("\\n", "")
+				.replace("-----BEGIN RSA PRIVATE KEY-----", "").replace("-----END RSA PRIVATE KEY-----", "");
+		byte[] decodedKey = Base64.getDecoder().decode(privateKeyPEM);
+		KeyFactory kf = KeyFactory.getInstance("RSA");
+		this.eisPrivateKey = kf.generatePrivate(new PKCS8EncodedKeySpec(decodedKey));
+
+		// Load public key from certificate once
+		try (FileInputStream fin = new FileInputStream(certPath)) {
+			CertificateFactory f = CertificateFactory.getInstance("X.509");
+			X509Certificate certificate = (X509Certificate) f.generateCertificate(fin);
+			this.eisPublicKey = certificate.getPublicKey();
+		}
+		LOGGER.info("AESEncryptionUtility initialized successfully.");
+	}
+
+	// This method is now instance-level, not static
+	public String eisEncrypt(String message, String key) throws IOException, ClassNotFoundException,
+			NoSuchMethodException, InvocationTargetException, InstanceNotFoundException,
+			InvalidAlgorithmParameterException, InterruptedException, NoSuchAlgorithmException, NoSuchPaddingException,
+			InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+		
+		byte[] keybyte = key.getBytes(StandardCharsets.UTF_8);
+		byte[] ivkey = Arrays.copyOf(keybyte, 12);
+
+		SecretKeySpec seckey = new SecretKeySpec(keybyte, "AES");
+		Cipher c = Cipher.getInstance(AES_TRANSFORMATION);
+		GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(128, ivkey);
+		c.init(Cipher.ENCRYPT_MODE, seckey, gcmParameterSpec);
+
+		byte[] encvalue = c.doFinal(message.getBytes(StandardCharsets.UTF_8));
+		return Base64.getEncoder().encodeToString(encvalue);
+	}
+
+	// This method is now instance-level, not static
+	public String sign(String message) throws IOException, ClassNotFoundException, NoSuchMethodException,
+			InvocationTargetException, InstanceNotFoundException, InvalidAlgorithmParameterException,
+			InterruptedException, NoSuchAlgorithmException, InvalidKeyException, SignatureException {
+		Signature sign = Signature.getInstance(SIGNATURE_ALGORITHM);
+		sign.initSign(this.eisPrivateKey);
+		sign.update(message.getBytes(StandardCharsets.UTF_8));
+		return Base64.getEncoder().encodeToString(sign.sign());
+	}
+
+	// This method is now instance-level, not static
+	public String rsaEncrypt(String data) throws IOException, ClassNotFoundException, NoSuchMethodException,
+			InvocationTargetException, InstanceNotFoundException, InvalidAlgorithmParameterException,
+			InterruptedException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException,
+			IllegalBlockSizeException, BadPaddingException {
+		Cipher cipher = Cipher.getInstance(RSA_TRANSFORMATION);
+		cipher.init(Cipher.ENCRYPT_MODE, this.eisPublicKey);
+		byte[] encdatabyte = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
+		return Base64.getEncoder().encodeToString(encdatabyte);
+	}
+
+	public String aesDecrypt(String message, String key) throws IOException, ClassNotFoundException,
+			NoSuchMethodException, InvocationTargetException, InstanceNotFoundException,
+			InvalidAlgorithmParameterException, InterruptedException, NoSuchAlgorithmException, NoSuchPaddingException,
+			InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+		byte[] keybyte = key.getBytes(StandardCharsets.UTF_8);
+		byte[] ivkey = Arrays.copyOf(keybyte, 12);
+
+		byte[] encvalue = Base64.getDecoder().decode(message);
+		SecretKeySpec seckey = new SecretKeySpec(keybyte, "AES");
+		Cipher c = Cipher.getInstance(AES_TRANSFORMATION);
+		GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(128, ivkey);
+
+		c.init(Cipher.DECRYPT_MODE, seckey, gcmParameterSpec);
+		byte[] decvalue = c.doFinal(encvalue);
+		return new String(decvalue, StandardCharsets.UTF_8);
+	}
+}
+
+
+
+package com.tcs.aadesh.util;
+
+public class CalculateCheckDigit {
+
+	public static char calculateCheckDigit(String accountNumber) {
+		int len = accountNumber.length();
+		int count = 16 - len;
+		String outAcctNumber = formPadStr('0', count).concat(accountNumber);
+
+		int counter1 = 5;
+		int finalVal = 0;
+		for (int idx = 0; idx < 16; ++idx) {
+			int byteVal = Character.getNumericValue(outAcctNumber.charAt(idx));
+
+			finalVal = (int) (finalVal + Math.pow(2.0D, counter1) * byteVal % 11.0D);
+
+			if (counter1 == 0)
+				counter1 = 10;
+			--counter1;
+		}
+
+		int chkDigit = finalVal % 10;
+		return Character.forDigit(chkDigit, 10);
+	}
+
+	public static char calculateCheckDigitCif(String primAcct) {
+		int len = primAcct.length();
+		int count = 11 - len;
+		String outAcctNumber = formPadStr('0', count).concat(primAcct);
+
+		int counter1 = 5;
+		int finalVal = 0;
+		for (int idx = 0; idx < 11; ++idx) {
+			int byteVal = Character.getNumericValue(outAcctNumber.charAt(idx));
+
+			finalVal = (int) (finalVal + Math.pow(2.0D, counter1) * byteVal % 11.0D);
+
+			if (counter1 == 0)
+				counter1 = 10;
+			--counter1;
+		}
+
+		int chkDigit = finalVal % 10;
+		return Character.forDigit(chkDigit, 10);
+	}
+
+	public static String AccountNumberWithCheckDigit(String accountNumber) {
+		int len = accountNumber.length();
+		int count = 16 - len;
+		String outAcctNumber = formPadStr('0', count).concat(accountNumber);
+
+		int counter1 = 5;
+		int finalVal = 0;
+		for (int idx = 0; idx < 16; ++idx) {
+			int byteVal = Character.getNumericValue(outAcctNumber.charAt(idx));
+
+			finalVal = (int) (finalVal + Math.pow(2.0D, counter1) * byteVal % 11.0D);
+
+			if (counter1 == 0)
+				counter1 = 10;
+			--counter1;
+		}
+
+		int chkDigit = finalVal % 10;
+		String AcctwithChkdgt = outAcctNumber + String.valueOf(chkDigit);
+		return AcctwithChkdgt;
+	}
+
+	public static boolean validateCheckDigit(String accountNumber) {
+		String acctNumWOChkDgt = accountNumber.substring(0, accountNumber.length() - 1);
+		char chkDgtSupplied = accountNumber.charAt(accountNumber.length() - 1);
+
+		return calculateCheckDigit(acctNumWOChkDgt) == chkDgtSupplied;
+	}
+
+	public String AccountNumberWithoutCheckDigit(String accountNumber) throws Exception {
+		String acctNumWOChkDgt = accountNumber.substring(0, accountNumber.length() - 1);
+		char chkDgtSupplied = accountNumber.charAt(accountNumber.length() - 1);
+
+		if (calculateCheckDigit(acctNumWOChkDgt) == chkDgtSupplied) {
+			return acctNumWOChkDgt;
+		}
+
+		String errorMessage = "Invalid Check Digit";
+
+		throw new Exception(errorMessage);
+	}
+
+	public static String formPadStr(char character, int count) {
+		if (count <= 0)
+			return "";
+		char[] buffer = new char[count];
+		for (int idx = 0; idx < count; ++idx) {
+			buffer[idx] = character;
+		}
+		return String.valueOf(buffer);
+	}
+}
+
+
+package com.tcs.aadesh.util;
+
+import org.slf4j.Logger;
+import org.springframework.stereotype.Component;
+
+@Component
+public final class ErrorLogger {
+
+	static String currentPackage = ErrorLogger.class.getPackage().getName();
+
+	static int lastDotIndex = currentPackage.lastIndexOf('.');
+
+	private static final String APP_BASE_PACKAGE = currentPackage.substring(0, lastDotIndex);
+
+	private ErrorLogger() {
+	}
+
+	public static void log(Logger log, Exception e) {
+		if (e == null) {
+			log.error("{} | Unknown error (exception was null)");
+			return;
+		}
+
+		StackTraceElement origin = findApplicationTrace(e);
+
+		log.error("{} in {}.{}({}:{}) | {}", e.getClass().getSimpleName(), origin.getClassName(),
+				origin.getMethodName(), origin.getFileName(), origin.getLineNumber(), safeMessage(e));
+	}
+
+	public static void log(Logger log, String message, Exception e) {
+		if (e == null) {
+			log.error("{} | Unknown error (exception was null)", message);
+			return;
+		}
+
+		StackTraceElement origin = findApplicationTrace(e);
+
+		log.error("{} | {} in {}.{}({}:{}) | {}", message, e.getClass().getSimpleName(), origin.getClassName(),
+				origin.getMethodName(), origin.getFileName(), origin.getLineNumber(), safeMessage(e));
+	}
+
+	private static StackTraceElement findApplicationTrace(Exception e) {
+		for (StackTraceElement element : e.getStackTrace()) {
+			if (element.getClassName().startsWith(APP_BASE_PACKAGE)) {
+				return element;
+			}
+		}
+		// fallback if no application class found
+		return e.getStackTrace().length > 0 ? e.getStackTrace()[0]
+				: new StackTraceElement("UnknownClass", "UnknownMethod", "UnknownFile", -1);
+	}
+
+	private static String safeMessage(Exception e) {
+		return (e.getMessage() == null || e.getMessage().isBlank()) ? "(no message)" : e.getMessage();
+	}
+}
+
+
+package com.tcs.aadesh.util;
+
+import java.math.BigDecimal;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class Utility {
+	private static Logger log = LoggerFactory.getLogger(Utility.class);
+
+	public static BigDecimal toBigDecimal(String value) {
+		if (value == null || value.trim().isEmpty()) {
+			return null;
+		}
+		try {
+			return new BigDecimal(value.trim());
+		} catch (NumberFormatException e) {
+			ErrorLogger.log(log, e);
+			throw new IllegalArgumentException("Invalid numeric format: " + value);
+		}
+	}
+
+	public static String removeLeadingZeros(String str) {
+		if (str == null) {
+			return null;
+		}
+
+		str = str.replaceAll("\\D", ""); // removes all non-digit characters
+
+		int index = 0;
+		while (index < str.length() && str.charAt(index) == '0') {
+			index++;
+		}
+
+		return index == str.length() ? "0" : str.substring(index);
+	}
+
+	public static String sanitize(String inputStr) {
+		if (inputStr == null) {
+			return null;
+		}
+
+		String digitsOnly = null;
+		StringBuilder sb;
+
+		try {
+			digitsOnly = removeLeadingZeros(inputStr.trim()); // returns "0" if inputStr contains all 0
+
+			if (digitsOnly.isEmpty() || digitsOnly.equals("0")) {
+				return null;
+			}
+
+			if (digitsOnly.length() >= 17) {
+				digitsOnly = digitsOnly.substring(0, 11);
+			}
+
+			int padLength = 17 - digitsOnly.length();
+			sb = new StringBuilder(17);
+			for (int i = 0; i < padLength; i++) {
+				sb.append('0');
+			}
+		} catch (StringIndexOutOfBoundsException | IllegalArgumentException e) {
+			throw new IllegalStateException("Sanitization error");
+		}
+		sb.append(digitsOnly);
+		return sb.toString();
+	}
+}
+
+
+package com.tcs.aadesh.validation;
+
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.cache.ValidationCacheService;
+import com.tcs.aadesh.constant.AppConstants;
+import com.tcs.aadesh.dto.request.AmendMandateRequestDTO;
+import com.tcs.aadesh.dto.response.EisMicroResponse;
+import com.tcs.aadesh.entity.Acmm;
+import com.tcs.aadesh.repository.AcmmRepository;
+import com.tcs.aadesh.repository.Amount1CardRepo;
+import com.tcs.aadesh.repository.SponserAllowCardRepo;
+import com.tcs.aadesh.repository.TredsLimitCardRepo;
+import com.tcs.aadesh.service.EisMicroService;
+
+@Component
+public class AmendMandateValidator extends MandateValidator {
+
+	final Set<String> ALLOWED_RCUR_FREQS = Set.of("DAIL", "WEEK", "MNTH", "QURT", "MIAN", "YEAR", "BIMN", "ADHO",
+			"INDA");
+
+	private final EisMicroService eisMicroService;
+
+	@Autowired
+	public AmendMandateValidator(AcmmRepository acmmRepository, Amount1CardRepo amount1CardRepo,
+			SponserAllowCardRepo sponserAllowCardRepo, TredsLimitCardRepo tredsLimitCardRepo,
+			ValidationCacheService validationCacheService, EisMicroService eisMicroService) {
+		super(acmmRepository, amount1CardRepo, sponserAllowCardRepo, tredsLimitCardRepo, validationCacheService);
+		this.eisMicroService = eisMicroService;
+	}
+
+	public Acmm validateAmendRequest(AmendMandateRequestDTO request) {
+
+		// Ensure mandate exists before amendment
+		Acmm acmm = ensureMandateExists(AppConstants.INST_NO.getValue(), request.getUmrn());
+
+		// Ensure mandate is ACTIVE
+		ensureActive(acmm.getUmrnStatus());
+
+		// Validate Account number
+		validateAccNo(request.getAcctNo());
+
+		// Validate Amount
+		validateAmount(request.getAmount());
+
+		// Validate FREQUENCY2
+		validateFrequency2(request.getFrequency1(), request.getFrequency2());
+
+		// Validate Treds amount
+		validateTredsAmount(request.getSponCode(), request.getUtilityCode(), request.getAmount());
+
+		EisMicroResponse eisMicroResponse = getValidatedEisMicroResponse(
+				eisMicroService.callMicroServices(request.getAcctNo()));
+
+		System.out.println("Eis response:  ---> " + eisMicroResponse);
+
+		validateProduct1(eisMicroResponse, request.getSponCode(), request.getUtilityCode());
+
+		return acmm;
+	}
+}
+
+
+package com.tcs.aadesh.validation;
+
+import java.math.BigDecimal;
+import java.util.Optional;
+import java.util.Set;
+
+import com.tcs.aadesh.cache.ValidationCacheService;
+import com.tcs.aadesh.constant.MandateOperation;
+import com.tcs.aadesh.dto.response.EisMicroResponse;
+import com.tcs.aadesh.entity.Acmm;
+import com.tcs.aadesh.entity.SponsorAllowCard;
+import com.tcs.aadesh.exception.BusinessException;
+import com.tcs.aadesh.exception.EisMicroException;
+import com.tcs.aadesh.repository.AcmmRepository;
+import com.tcs.aadesh.repository.Amount1CardRepo;
+import com.tcs.aadesh.repository.SponserAllowCardRepo;
+import com.tcs.aadesh.repository.TredsLimitCardRepo;
+import com.tcs.aadesh.util.CalculateCheckDigit;
+import com.tcs.aadesh.util.Utility;
+
+public abstract class MandateValidator {
+
+	protected final AcmmRepository acmmRepository;
+	protected final Amount1CardRepo amount1CardRepo;
+	protected final SponserAllowCardRepo sponserAllowCardRepo;
+	protected final TredsLimitCardRepo tredsLimitCardRepo;
+	private final ValidationCacheService validationCacheService;
+
+	final Set<String> ALLOWED_RCUR_FREQS = Set.of("DAIL", "WEEK", "MNTH", "QURT", "MIAN", "YEAR", "BIMN", "ADHO",
+			"INDA");
+
+	public MandateValidator(AcmmRepository acmmRepository, Amount1CardRepo amount1CardRepo,
+			SponserAllowCardRepo sponserAllowCardRepo, TredsLimitCardRepo tredsLimitCardRepo,
+			ValidationCacheService validationCacheService) {
+		super();
+		this.acmmRepository = acmmRepository;
+		this.amount1CardRepo = amount1CardRepo;
+		this.sponserAllowCardRepo = sponserAllowCardRepo;
+		this.tredsLimitCardRepo = tredsLimitCardRepo;
+		this.validationCacheService = validationCacheService;
+	}
+
+	// ----------------------------------------------------------------------
+	protected Acmm ensureMandateExists(String instNo, String umrnNo) {
+		return acmmRepository.findByInstNoAndUmrnNo(instNo, umrnNo)
+				.orElseThrow(() -> new BusinessException("0188", "Acmm record not found."));
+	}
+
+	// ----------------------------------------------------------------------
+	protected void ensureMandateDoesNotExist(String instNo, String umrnNo) {
+		if (acmmRepository.existsByInstNoAndUmrnNo(instNo, umrnNo)) {
+			throw new BusinessException("0199", "A record for UMRN " + umrnNo + " already exists.");
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void ensureActive(String umrnStatus) {
+		Set<String> ACTIVE = Set.of(MandateOperation.CREATE.getUmrnStatus(), MandateOperation.AMEND.getUmrnStatus());
+
+		if (!ACTIVE.contains(umrnStatus)) {
+//			throw new BusinessException("9065", "Mandate is not active.");
+			throw new BusinessException("9065", "Mandate must be active to perform this action.");   
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void ensureStopped(String umrnStatus) {
+		if (!umrnStatus.equals(MandateOperation.STOP.getUmrnStatus())) {
+			throw new BusinessException("9066", "Mandate must be stopped to perform this action.");   
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void validateAccNo(String acctNo) {
+		acctNo = Utility.sanitize(acctNo);
+		acctNo = Utility.removeLeadingZeros(acctNo);
+
+		if (acctNo == null || acctNo.length() != 11) {
+			throw new BusinessException("0108", "Account number must be exactly 11 characters.");
+		}
+
+		if (!CalculateCheckDigit.validateCheckDigit(acctNo)) {
+			throw new BusinessException("0108", "Invalid checkdigit.");
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void validateFrequency2(String frequency1, String frequency2) {
+		if ("RCUR".equals(frequency1)) {
+			if (frequency2 == null || frequency2.isBlank() || frequency2.matches("^0+$")) {
+				throw new BusinessException("0432", "FREQUENCY2 is either blank or zero");
+			}
+
+			if (!ALLOWED_RCUR_FREQS.contains(frequency2)) {
+				throw new BusinessException("0432", "Invalid frequency2.");
+			}
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void validateAmount(BigDecimal requestAmount) {
+		String amount1CardAmount = validationCacheService.getAmount1CardAmount();
+		BigDecimal cardFileAmount = Utility.toBigDecimal(amount1CardAmount);
+
+		if (requestAmount.compareTo(cardFileAmount) >= 0) {
+			throw new BusinessException("8884", "Invalid amount.");
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void validateTredsAmount(String sponCode, String utilityCode, BigDecimal requestAmount) {
+		if (sponCode != null && sponCode.length() == 11) {
+			Optional<SponsorAllowCard> optional = sponserAllowCardRepo.findBySponsorBankAndUtilityCode(sponCode,
+					utilityCode);
+
+			if (optional.isPresent()) {
+				BigDecimal tredsLimit = Utility.toBigDecimal(validationCacheService.getTredsLimitStr());
+
+				if (requestAmount.compareTo(tredsLimit) >= 0) {
+					throw new BusinessException("8884");
+				}
+			}
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected void validateProduct1(EisMicroResponse eisMicroResponse, String sponCode, String utilityCode) {
+		String accType = eisMicroResponse.getACCT_TYPE().trim();
+		String intCat = eisMicroResponse.getINT_CAT().trim();
+
+		SponsorAllowCard reqSponsorAllowCard = new SponsorAllowCard();
+		reqSponsorAllowCard.setSponsorBank(sponCode);
+		reqSponsorAllowCard.setUtilityCode(utilityCode);
+
+		Set<String> product1CardValues = validationCacheService.getProduct1CardValues();
+		Set<SponsorAllowCard> sponsorAllowCards = validationCacheService.getSponsorAllowCards();
+
+		if (product1CardValues.contains(accType + intCat)) {
+			if (!sponsorAllowCards.contains(reqSponsorAllowCard)) {
+				throw new BusinessException("8883");
+			}
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	protected EisMicroResponse getValidatedEisMicroResponse(EisMicroResponse eisMicroResponse) {
+		if (eisMicroResponse == null) {
+			throw new BusinessException("AD005");
+		}
+
+		String responseStatus = eisMicroResponse.getRESPONSE_STATUS();
+
+		if (responseStatus.equals("1")) {
+			String eisMicroErrorCode = eisMicroResponse.getERROR_CODE();
+			String eisMicroErrorDescription = eisMicroResponse.getERROR_DESCRIPTION();
+
+			String errorCode = "0188";
+
+			if (!(eisMicroErrorCode.equalsIgnoreCase("0188") || eisMicroErrorCode.equalsIgnoreCase("188"))) {
+				errorCode = "AD008";
+			}
+
+			throw new EisMicroException(errorCode, eisMicroErrorCode + ":" + eisMicroErrorDescription);
+		} else if (!responseStatus.equals("0")) {
+			throw new BusinessException("AD006");
+		}
+
+		return eisMicroResponse;
+	}
+}
+
+
+
+package com.tcs.aadesh.validation;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.cache.ValidationCacheService;
+import com.tcs.aadesh.constant.AppConstants;
+import com.tcs.aadesh.dto.request.RevokeMandateRequestDTO;
+import com.tcs.aadesh.entity.Acmm;
+import com.tcs.aadesh.repository.AcmmRepository;
+import com.tcs.aadesh.repository.Amount1CardRepo;
+import com.tcs.aadesh.repository.SponserAllowCardRepo;
+import com.tcs.aadesh.repository.TredsLimitCardRepo;
+
+@Component
+public class RevokeMandateValidator extends MandateValidator {
+
+	@Autowired
+	public RevokeMandateValidator(AcmmRepository acmmRepository, Amount1CardRepo amount1CardRepo,
+			SponserAllowCardRepo sponserAllowCardRepo, TredsLimitCardRepo tredsLimitCardRepo,
+			ValidationCacheService validationCacheService) {
+		super(acmmRepository, amount1CardRepo, sponserAllowCardRepo, tredsLimitCardRepo, validationCacheService);
+	}
+
+	public Acmm validateRevokeRequest(RevokeMandateRequestDTO request) {
+
+		// Ensure mandate exists before amendment
+		Acmm acmm = ensureMandateExists(AppConstants.INST_NO.getValue(), request.getUmrn());
+
+		// Check if mandate status is STOPPED
+		ensureStopped(acmm.getUmrnStatus());
+
+		return acmm;
+	}
+}
+
+package com.tcs.aadesh.validation;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.cache.ValidationCacheService;
+import com.tcs.aadesh.constant.AppConstants;
+import com.tcs.aadesh.dto.request.StopMandateRequestDTO;
+import com.tcs.aadesh.entity.Acmm;
+import com.tcs.aadesh.repository.AcmmRepository;
+import com.tcs.aadesh.repository.Amount1CardRepo;
+import com.tcs.aadesh.repository.SponserAllowCardRepo;
+import com.tcs.aadesh.repository.TredsLimitCardRepo;
+
+@Component
+public class StopMandateValidator extends MandateValidator {
+
+	@Autowired
+	public StopMandateValidator(AcmmRepository acmmRepository, Amount1CardRepo amount1CardRepo,
+			SponserAllowCardRepo sponserAllowCardRepo, TredsLimitCardRepo tredsLimitCardRepo,
+			ValidationCacheService validationCacheService) {
+		super(acmmRepository, amount1CardRepo, sponserAllowCardRepo, tredsLimitCardRepo, validationCacheService);
+	}
+
+	public Acmm validateStopRequest(StopMandateRequestDTO request) {
+
+		// Ensure mandate exists before amendment
+		Acmm acmm = ensureMandateExists(AppConstants.INST_NO.getValue(), request.getUmrn());
+
+		// Ensure mandate is ACTIVE
+		ensureActive(acmm.getUmrnStatus());
+
+		return acmm;
+	}
+}
+
+
+
