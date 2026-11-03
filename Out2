@@ -359,3 +359,281 @@ public enum AppConstants {
 
 
 
+package com.tcs.npci.outward.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import java.time.LocalDateTime;
+import java.sql.Date;
+
+@Entity
+@Table(name = "OUTWARD_FILE_LOGS")
+public class OutwardFileLog {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "ID")
+    private Long id;
+
+    @Column(name = "FILE_NAME", length = 100)
+    private String fileName;
+
+    @Column(name = "FOLDER_NAME", length = 100)
+    private String folderName;
+
+    @Column(name = "ERROR_CODE", length = 10)
+    private String errorCode;
+
+    @Column(name = "ENTRY_DATE")
+    private Date entryDate;
+
+    @Column(name = "LAST_UPDATED_TIME")
+    private LocalDateTime lastUpdatedTime;
+
+    @Column(name = "PROCESS_TYPE", length = 10)
+    private String processType; // e.g., "ENC"
+
+    @Column(name = "ZONE", length = 10)
+    private String zone;
+
+    public OutwardFileLog() {
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getFileName() {
+        return fileName;
+    }
+
+    public void setFileName(String fileName) {
+        this.fileName = fileName;
+    }
+
+    public String getFolderName() {
+        return folderName;
+    }
+
+    public void setFolderName(String folderName) {
+        this.folderName = folderName;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    public void setErrorCode(String errorCode) {
+        this.errorCode = errorCode;
+    }
+
+    public Date getEntryDate() {
+        return entryDate;
+    }
+
+    public void setEntryDate(Date entryDate) {
+        this.entryDate = entryDate;
+    }
+
+    public LocalDateTime getLastUpdatedTime() {
+        return lastUpdatedTime;
+    }
+
+    public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) {
+        this.lastUpdatedTime = lastUpdatedTime;
+    }
+
+    public String getProcessType() {
+        return processType;
+    }
+
+    public void setProcessType(String processType) {
+        this.processType = processType;
+    }
+
+    public String getZone() {
+        return zone;
+    }
+
+    public void setZone(String zone) {
+        this.zone = zone;
+    }
+
+    @Override
+    public String toString() {
+        return "OutwardFileLog [id=" + id + ", fileName=" + fileName + ", folderName=" + folderName
+                + ", errorCode=" + errorCode + ", entryDate=" + entryDate + ", lastUpdatedTime="
+                + lastUpdatedTime + ", processType=" + processType + ", zone=" + zone + "]";
+    }
+}
+
+
+
+package com.tcs.npci.outward.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import java.time.LocalDateTime;
+import java.sql.Date;
+
+@Entity
+@Table(name = "OUTWARD_ENC_LOGS")
+public class OutwardEncLog {
+
+    @Id
+    @Column(name = "REFERENCE_NUMBER", length = 35)
+    private String referenceNumber;
+
+    @Column(name = "ENTRY_DATE")
+    private Date entryDate;
+
+    @Column(name = "FILE_NAME", length = 100)
+    private String fileName;
+
+    @Column(name = "FILE_TYPE", length = 20)
+    private String fileType;
+
+    @Column(name = "ERROR_CODE", length = 10)
+    private String errorCode;
+
+    @Column(name = "ENCRYPTION_TYPE", length = 20)
+    private String encryptionType;
+
+    @Column(name = "TOTAL_NO_OF_RECORDS")
+    private Integer totalNoOfRecords;
+
+    @Column(name = "FILE_COPIED_TIME")
+    private LocalDateTime fileCopiedTime;
+
+    @Column(name = "STATUS", length = 50)
+    private String status;
+
+    @Column(name = "STATUS_ENC", length = 50)
+    private String statusEnc;
+
+    @Column(name = "LAST_UPDATED_TIME")
+    private LocalDateTime lastUpdatedTime;
+
+    @Column(name = "ZONE", length = 10)
+    private String zone;
+
+    public OutwardEncLog() {
+    }
+
+    public String getReferenceNumber() {
+        return referenceNumber;
+    }
+
+    public void setReferenceNumber(String referenceNumber) {
+        this.referenceNumber = referenceNumber;
+    }
+
+    public Date getEntryDate() {
+        return entryDate;
+    }
+
+    public void setEntryDate(Date entryDate) {
+        this.entryDate = entryDate;
+    }
+
+    public String getFileName() {
+        return fileName;
+    }
+
+    public void setFileName(String fileName) {
+        this.fileName = fileName;
+    }
+
+    public String getFileType() {
+        return fileType;
+    }
+
+    public void setFileType(String fileType) {
+        this.fileType = fileType;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    public void setErrorCode(String errorCode) {
+        this.errorCode = errorCode;
+    }
+
+    public String getEncryptionType() {
+        return encryptionType;
+    }
+
+    public void setEncryptionType(String encryptionType) {
+        this.encryptionType = encryptionType;
+    }
+
+    public Integer getTotalNoOfRecords() {
+        return totalNoOfRecords;
+    }
+
+    public void setTotalNoOfRecords(Integer totalNoOfRecords) {
+        this.totalNoOfRecords = totalNoOfRecords;
+    }
+
+    public LocalDateTime getFileCopiedTime() {
+        return fileCopiedTime;
+    }
+
+    public void setFileCopiedTime(LocalDateTime fileCopiedTime) {
+        this.fileCopiedTime = fileCopiedTime;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getStatusEnc() {
+        return statusEnc;
+    }
+
+    public void setStatusEnc(String statusEnc) {
+        this.statusEnc = statusEnc;
+    }
+
+    public LocalDateTime getLastUpdatedTime() {
+        return lastUpdatedTime;
+    }
+
+    public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) {
+        this.lastUpdatedTime = lastUpdatedTime;
+    }
+
+    public String getZone() {
+        return zone;
+    }
+
+    public void setZone(String zone) {
+        this.zone = zone;
+    }
+
+    @Override
+    public String toString() {
+        return "OutwardEncLog [referenceNumber=" + referenceNumber + ", entryDate=" + entryDate
+                + ", fileName=" + fileName + ", fileType=" + fileType + ", errorCode=" + errorCode
+                + ", encryptionType=" + encryptionType + ", totalNoOfRecords=" + totalNoOfRecords
+                + ", fileCopiedTime=" + fileCopiedTime + ", status=" + status + ", statusEnc=" + statusEnc
+                + ", lastUpdatedTime=" + lastUpdatedTime + ", zone=" + zone + "]";
+    }
+}
+
+
