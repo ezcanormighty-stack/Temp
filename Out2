@@ -1909,3 +1909,103 @@ public final class ErrorLogger {
         return (e.getMessage() == null || e.getMessage().isBlank()) ? "(no message)" : e.getMessage();
     }
 }
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Properties>
+        <Property name="LOG_PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</Property>
+        <Property name="APP_LOG_ROOT">logs</Property>
+    </Properties>
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${LOG_PATTERN}" />
+        </Console>
+
+        <RollingFile name="RollingFile" 
+                     fileName="${APP_LOG_ROOT}/npci-outward.log"
+                     filePattern="${APP_LOG_ROOT}/npci-outward-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${LOG_PATTERN}" />
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true" />
+                <SizeBasedTriggeringPolicy size="10 MB" />
+            </Policies>
+            <DefaultRolloverStrategy max="30" />
+        </RollingFile>
+    </Appenders>
+
+    <Loggers>
+        <Logger name="com.tcs.npci.outward" level="debug" additivity="false">
+            <AppenderRef ref="Console" />
+            <AppenderRef ref="RollingFile" />
+        </Logger>
+
+        <Root level="info">
+            <AppenderRef ref="Console" />
+            <AppenderRef ref="RollingFile" />
+        </Root>
+    </Loggers>
+</Configuration>
+
+
+
+spring:
+  application:
+    name: npci-outward-encryption
+
+  # Database configuration mapping legacy HikariCP settings
+  datasource:
+    url: jdbc:oracle:thin:@//localhost:1521/ORCL
+    username: db_user
+    password: db_password
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: none # Ensure it does not drop/create existing legacy tables
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.OracleDialect
+
+# Polling frequency for the directory scanner (in milliseconds)
+polling:
+  fixed-delay: 15000 
+
+# File paths mapping to legacy MandateEncProperties
+directory:
+  source: /app/npci/source
+  destination: /app/npci/destination
+  zipped: /app/npci/zipped
+  signed: /app/npci/signed
+  to-process: /app/npci/to_process
+  failed: /app/npci/failed
+  backup: /app/npci/backup
+  zipping-failed: /app/npci/failed_zipping
+  signing-failed: /app/npci/failed_signing
+  encrypting-failed: /app/npci/failed_encryption
+
+# Cryptography properties for Signing (Keystore) and Encrypting (PGP)
+crypto:
+  keystore:
+    private-key-path: classpath:keys/signing_keystore.p12
+    password: your_keystore_password
+    public-cert-path: classpath:keys/public_cert.cer
+  pgp:
+    public-key-path: classpath:keys/npci_public_key.asc
+
+# SFTP properties mapping to legacy JSch connection settings
+sftp:
+  host: sftp.npci.org.in
+  port: 22
+  username: sftp_user
+  password: sftp_password # Optional if using private key
+  private-key-path: classpath:keys/sftp_private_key.pem
+  remote-dest-path: /remote/inward/
