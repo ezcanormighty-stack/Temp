@@ -2009,3 +2009,190 @@ sftp:
   password: sftp_password # Optional if using private key
   private-key-path: classpath:keys/sftp_private_key.pem
   remote-dest-path: /remote/inward/
+
+
+
+
+
+package com.tcs.npci.outward.service;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.tcs.npci.outward.config.properties.DirectoryProperties;
+import com.tcs.npci.outward.constant.AppConstants;
+import com.tcs.npci.outward.entity.OutwardFileLog;
+import com.tcs.npci.outward.repository.OutwardFileLogRepository;
+
+@Service
+public class FileBatchingService {
+
+    private static final Logger log = LoggerFactory.getLogger(FileBatchingService.class);
+    
+    private final DirectoryProperties directoryProperties;
+    private final OutwardFileLogRepository outwardFileLogRepository;
+    private final CryptoOrchestrationService cryptoOrchestrationService;
+    private final ExecutorService fileProcessingExecutor;
+
+    private static final int TARGET_SETS = Integer.parseInt(AppConstants.BATCH_XML_LIMIT.getValue());
+
+    // Matches MMS-<TYPE>-<COMMON_ID><SUFFIX>
+    private static final Pattern FILE_PATTERN = Pattern.compile("^MMS-[A-Z]+-(.+?)(?:-INP\\.xml|_detailfront\\.jpg|_front\\.tif)$", Pattern.CASE_INSENSITIVE);
+
+    public FileBatchingService(DirectoryProperties directoryProperties,
+                               OutwardFileLogRepository outwardFileLogRepository,
+                               CryptoOrchestrationService cryptoOrchestrationService,
+                               ExecutorService fileProcessingExecutor) {
+        this.directoryProperties = directoryProperties;
+        this.outwardFileLogRepository = outwardFileLogRepository;
+        this.cryptoOrchestrationService = cryptoOrchestrationService;
+        this.fileProcessingExecutor = fileProcessingExecutor;
+    }
+
+    public void processDirectory(Path subFolder) throws IOException {
+        String folderName = subFolder.getFileName().toString();
+        List<Path> allFiles = Files.list(subFolder).filter(Files::isRegularFile).toList();
+
+        if (allFiles.isEmpty()) {
+            return;
+        }
+
+        Map<String, FileSet> groupedFiles = new HashMap<>();
+        
+        for (Path file : allFiles) {
+            String fileName = file.getFileName().toString();
+            String commonId = extractCommonId(fileName);
+            
+            if (commonId == null) {
+                log.warn("Filename does not match expected pattern, skipping: {}", fileName);
+                continue;
+            }
+
+            groupedFiles.putIfAbsent(commonId, new FileSet(commonId));
+            FileSet set = groupedFiles.get(commonId);
+
+            String lowerName = fileName.toLowerCase();
+            if (lowerName.endsWith("-inp.xml")) {
+                set.setXmlFile(file);
+            } else if (lowerName.endsWith("_front.tif") || lowerName.endsWith("_front.tiff")) {
+                set.setTifFile(file);
+            } else if (lowerName.endsWith("_detailfront.jpg") || lowerName.endsWith("_detailfront.jpeg")) {
+                set.setJpgFile(file);
+            }
+        }
+
+        List<FileSet> validSets = new ArrayList<>();
+        for (FileSet set : groupedFiles.values()) {
+            if (set.isValidSet()) {
+                validSets.add(set);
+            }
+        }
+
+        log.info("Found {} complete valid file sets in {}", validSets.size(), folderName);
+
+        int processedCount = 0;
+        while (validSets.size() - processedCount >= TARGET_SETS) {
+            List<FileSet> batchSets = validSets.subList(processedCount, processedCount + TARGET_SETS);
+            createBatchAndProcess(batchSets, folderName);
+            processedCount += TARGET_SETS;
+        }
+    }
+
+    private String extractCommonId(String fileName) {
+        Matcher matcher = FILE_PATTERN.matcher(fileName);
+        if (matcher.matches()) {
+            return matcher.group(1); // Returns the extracted ID (e.g., AUBL-AUBLH2HUSER1-23042026-001094)
+        }
+        return null;
+    }
+
+    private void createBatchAndProcess(List<FileSet> batchSets, String folderName) {
+        String currDate = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyyyy"));
+        String batchFolderName = "MMS-" + folderName + "-SBIN-SBIN-" + currDate + "-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase() + "-ACCEPT";
+        
+        Path destDir = Paths.get(directoryProperties.getToProcess(), folderName, batchFolderName);
+        
+        try {
+            Files.createDirectories(destDir);
+            
+            List<Path> batchFiles = new ArrayList<>();
+            Date entryDate = new Date(System.currentTimeMillis());
+
+            for (FileSet set : batchSets) {
+                batchFiles.add(moveAndLogFile(set.getXmlFile(), destDir, folderName, batchFolderName, entryDate));
+                batchFiles.add(moveAndLogFile(set.getTifFile(), destDir, folderName, batchFolderName, entryDate));
+                batchFiles.add(moveAndLogFile(set.getJpgFile(), destDir, folderName, batchFolderName, entryDate));
+            }
+
+            log.info("Batch ready: {} files in {}. Triggering async crypto process.", batchFiles.size(), batchFolderName);
+
+            fileProcessingExecutor.execute(() -> {
+                cryptoOrchestrationService.processBatch(destDir.toFile(), folderName, batchFolderName, batchFiles.size());
+            });
+
+        } catch (IOException e) {
+            log.error("Failed to create batch directory or move files for batch: {}", batchFolderName, e);
+        }
+    }
+
+    private Path moveAndLogFile(Path sourceFile, Path destDir, String folderName, String batchFolderName, Date entryDate) throws IOException {
+        String fileName = sourceFile.getFileName().toString();
+        Path destFile = destDir.resolve(fileName);
+        
+        Files.move(sourceFile, destFile, StandardCopyOption.REPLACE_EXISTING);
+
+        OutwardFileLog fileLog = new OutwardFileLog();
+        fileLog.setFileName(fileName);
+        fileLog.setFolderName(batchFolderName);
+        fileLog.setProcessType("ENC");
+        fileLog.setZone("OTH"); 
+        fileLog.setEntryDate(entryDate);
+        fileLog.setLastUpdatedTime(LocalDateTime.now());
+        
+        outwardFileLogRepository.save(fileLog);
+        
+        return destFile;
+    }
+
+    private static class FileSet {
+        private final String commonId;
+        private Path xmlFile;
+        private Path tifFile;
+        private Path jpgFile;
+
+        public FileSet(String commonId) {
+            this.commonId = commonId;
+        }
+
+        public void setXmlFile(Path xmlFile) { this.xmlFile = xmlFile; }
+        public void setTifFile(Path tifFile) { this.tifFile = tifFile; }
+        public void setJpgFile(Path jpgFile) { this.jpgFile = jpgFile; }
+
+        public Path getXmlFile() { return xmlFile; }
+        public Path getTifFile() { return tifFile; }
+        public Path getJpgFile() { return jpgFile; }
+
+        public boolean isValidSet() {
+            return xmlFile != null && tifFile != null && jpgFile != null;
+        }
+    }
+}
