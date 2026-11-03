@@ -1,0 +1,289 @@
+package com.tcs.npci.outward.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "crypto", ignoreUnknownFields = false)
+public class CryptoProperties {
+
+	@Valid
+	@NotNull
+	private Keystore keystore = new Keystore();
+
+	@Valid
+	@NotNull
+	private Pgp pgp = new Pgp();
+
+	public Keystore getKeystore() {
+		return keystore;
+	}
+
+	public Pgp getPgp() {
+		return pgp;
+	}
+
+	public static class Keystore {
+		@NotBlank(message = "'crypto.keystore.private-key-path' must be set and cannot be empty")
+		private String privateKeyPath;
+
+		@NotBlank(message = "'crypto.keystore.password' must be set and cannot be empty")
+		private String password;
+
+		@NotBlank(message = "'crypto.keystore.public-cert-path' must be set and cannot be empty")
+		private String publicCertPath;
+
+		public String getPrivateKeyPath() {
+			return privateKeyPath;
+		}
+
+		public void setPrivateKeyPath(String privateKeyPath) {
+			this.privateKeyPath = privateKeyPath;
+		}
+
+		public String getPassword() {
+			return password;
+		}
+
+		public void setPassword(String password) {
+			this.password = password;
+		}
+
+		public String getPublicCertPath() {
+			return publicCertPath;
+		}
+
+		public void setPublicCertPath(String publicCertPath) {
+			this.publicCertPath = publicCertPath;
+		}
+	}
+
+	public static class Pgp {
+		@NotBlank(message = "'crypto.pgp.public-key-path' must be set and cannot be empty")
+		private String publicKeyPath;
+
+		public String getPublicKeyPath() {
+			return publicKeyPath;
+		}
+
+		public void setPublicKeyPath(String publicKeyPath) {
+			this.publicKeyPath = publicKeyPath;
+		}
+	}
+}
+
+
+
+package com.tcs.npci.outward.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotBlank;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "directory")
+public class DirectoryProperties {
+
+    @NotBlank(message = "'directory.source' must be set and cannot be empty")
+    private String source;
+
+    @NotBlank(message = "'directory.destination' must be set and cannot be empty")
+    private String destination;
+
+    @NotBlank(message = "'directory.zipped' must be set and cannot be empty")
+    private String zipped;
+
+    @NotBlank(message = "'directory.signed' must be set and cannot be empty")
+    private String signed;
+
+    @NotBlank(message = "'directory.to-process' must be set and cannot be empty")
+    private String toProcess;
+
+    @NotBlank(message = "'directory.failed' must be set and cannot be empty")
+    private String failed;
+
+    @NotBlank(message = "'directory.backup' must be set and cannot be empty")
+    private String backup;
+
+    @NotBlank(message = "'directory.zipping-failed' must be set and cannot be empty")
+    private String zippingFailed;
+
+    @NotBlank(message = "'directory.signing-failed' must be set and cannot be empty")
+    private String signingFailed;
+
+    @NotBlank(message = "'directory.encrypting-failed' must be set and cannot be empty")
+    private String encryptingFailed;
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    public String getDestination() {
+        return destination;
+    }
+
+    public void setDestination(String destination) {
+        this.destination = destination;
+    }
+
+    public String getZipped() {
+        return zipped;
+    }
+
+    public void setZipped(String zipped) {
+        this.zipped = zipped;
+    }
+
+    public String getSigned() {
+        return signed;
+    }
+
+    public void setSigned(String signed) {
+        this.signed = signed;
+    }
+
+    public String getToProcess() {
+        return toProcess;
+    }
+
+    public void setToProcess(String toProcess) {
+        this.toProcess = toProcess;
+    }
+
+    public String getFailed() {
+        return failed;
+    }
+
+    public void setFailed(String failed) {
+        this.failed = failed;
+    }
+
+    public String getBackup() {
+        return backup;
+    }
+
+    public void setBackup(String backup) {
+        this.backup = backup;
+    }
+
+    public String getZippingFailed() {
+        return zippingFailed;
+    }
+
+    public void setZippingFailed(String zippingFailed) {
+        this.zippingFailed = zippingFailed;
+    }
+
+    public String getSigningFailed() {
+        return signingFailed;
+    }
+
+    public void setSigningFailed(String signingFailed) {
+        this.signingFailed = signingFailed;
+    }
+
+    public String getEncryptingFailed() {
+        return encryptingFailed;
+    }
+
+    public void setEncryptingFailed(String encryptingFailed) {
+        this.encryptingFailed = encryptingFailed;
+    }
+}
+
+
+
+
+package com.tcs.npci.outward.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "sftp")
+public class SftpProperties {
+
+    @NotBlank(message = "'sftp.host' must be set and cannot be empty")
+    private String host;
+
+    @NotNull(message = "'sftp.port' must be set")
+    private Integer port;
+
+    @NotBlank(message = "'sftp.username' must be set and cannot be empty")
+    private String username;
+
+    private String password; // Optional if using private key authentication exclusively
+
+    @NotBlank(message = "'sftp.private-key-path' must be set and cannot be empty")
+    private String privateKeyPath;
+
+    @NotBlank(message = "'sftp.remote-dest-path' must be set and cannot be empty")
+    private String remoteDestPath;
+
+    public String getHost() {
+        return host;
+    }
+
+    public void setHost(String host) {
+        this.host = host;
+    }
+
+    public Integer getPort() {
+        return port;
+    }
+
+    public void setPort(Integer port) {
+        this.port = port;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public String getPrivateKeyPath() {
+        return privateKeyPath;
+    }
+
+    public void setPrivateKeyPath(String privateKeyPath) {
+        this.privateKeyPath = privateKeyPath;
+    }
+
+    public String getRemoteDestPath() {
+        return remoteDestPath;
+    }
+
+    public void setRemoteDestPath(String remoteDestPath) {
+        this.remoteDestPath = remoteDestPath;
+    }
+}
+
