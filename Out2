@@ -2293,3 +2293,8 @@ directory:
                 set.setJpgFile(file);
             }
         }
+
+
+
+filename:
+  pattern: "^MMS-[A-Z]+-[A-Z]+-(.+?)-(\\d{8})(?:-[0-9]+)?(?:-INP\\.xml|_front\\.tif|_front\\.tiff|_detailfront\\.jpg|_detailfront\\.jpeg)$"
