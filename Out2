@@ -2227,3 +2227,9 @@ CREATE TABLE OUTWARD_FILE_LOGS (
 
 -- Optional index for faster duplicate checks during batching
 CREATE INDEX IDX_OUTWARD_FILE_LOGS_NAME_DATE ON OUTWARD_FILE_LOGS (FILE_NAME, ENTRY_DATE);
+
+
+directory:
+  # ... other paths ...
+  # Group 1: Common ID, Group 2: Date (ddMMyyyy)
+  file-pattern: "^MMS-[A-Z]+-(.+?)-(\\d{8})(?:-[0-9]+)?-(?:-INP\\.xml|_front\\.tif|_front\\.tiff|_detailfront\\.jpg|_detailfront\\.jpeg)$"
