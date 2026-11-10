@@ -2298,3 +2298,17 @@ directory:
 
 filename:
   pattern: "^MMS-[A-Z]+-[A-Z]+-(.+?)-(\\d{8})(?:-[0-9]+)?(?:-INP\\.xml|_front\\.tif|_front\\.tiff|_detailfront\\.jpg|_detailfront\\.jpeg)$"
+
+
+private void logFileStatus(String fileName, String folderName, String errorCode, String processType) {
+    OutwardFileLog logEntry = new OutwardFileLog();
+    logEntry.setFileName(fileName);
+    logEntry.setFolderName(folderName);
+    logEntry.setErrorCode(errorCode); // null for success, or error code/message for failures
+    logEntry.setEntryDate(new Date(System.currentTimeMillis()));
+    logEntry.setLastUpdatedTime(LocalDateTime.now());
+    logEntry.setProcessType(processType); // e.g., "VALIDATION", "BATCHING", "ENCRYPTION"
+    logEntry.setZone("DEFAULT_ZONE"); // Adjust based on your zone handling
+
+    outwardFileLogRepository.save(logEntry);
+}
