@@ -2255,3 +2255,41 @@ directory:
     }
 
 
+        for (Path file : allFiles) {
+            String fileName = file.getFileName().toString();
+            
+            // 1. Check if already processed in database
+            boolean isAlreadyProcessed = outwardFileLogRepository.existsByFileNameAndErrorCodeIsNull(fileName);
+            if (isAlreadyProcessed) {
+                log.info("File already processed, skipping: {}", fileName);
+                continue;
+            }
+
+            Matcher matcher = filePattern.matcher(fileName);
+            if (!matcher.find()) {
+                log.warn("Filename does not match expected pattern, skipping: {}", fileName);
+                continue;
+            }
+
+            String commonId = matcher.group(1);
+            String fileDateStr = matcher.group(2); // Captured 8-digit date string (ddMMyyyy)
+
+            // 2. Validate file date against allowed range (Current Date back to X configured days)
+            if (!isDateWithinAllowedRange(fileDateStr)) {
+                log.warn("File date {} is outside the allowed range of past {} days, skipping: {}", 
+                        fileDateStr, batchProperties.getAllowedHistoryDays(), fileName);
+                continue;
+            }
+
+            groupedFiles.putIfAbsent(commonId, new FileSet(commonId));
+            FileSet set = groupedFiles.get(commonId);
+
+            String lowerName = fileName.toLowerCase();
+            if (lowerName.endsWith("-inp.xml")) {
+                set.setXmlFile(file);
+            } else if (lowerName.endsWith("_front.tif") || lowerName.endsWith("_front.tiff")) {
+                set.setTifFile(file);
+            } else if (lowerName.endsWith("_detailfront.jpg") || lowerName.endsWith("_detailfront.jpeg")) {
+                set.setJpgFile(file);
+            }
+        }
