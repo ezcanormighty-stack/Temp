@@ -1,0 +1,171 @@
+package com.tcs.aadesh.service;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.config.properties.DirectoryProperties;
+import com.tcs.aadesh.constant.AppConstants;
+import com.tcs.aadesh.constant.ErrorConstants;
+import com.tcs.aadesh.entity.OutwardEncLog;
+import com.tcs.aadesh.exception.CryptoOperationException;
+import com.tcs.aadesh.repository.OutwardEncLogRepo;
+import com.tcs.aadesh.util.PgpEncryptionUtility;
+import com.tcs.aadesh.util.SignatureUtility;
+import com.tcs.aadesh.util.ZipUtility;
+
+@Service
+public class CryptoOrchestrationService {
+
+    private static final Logger log = LoggerFactory.getLogger(CryptoOrchestrationService.class);
+
+    private final DirectoryProperties directoryProperties;
+    private final OutwardEncLogRepo outwardEncLogRepository;
+    private final ZipUtility zipUtility;
+    private final SignatureUtility signatureUtility;
+    private final PgpEncryptionUtility pgpEncryptionUtility;
+    private final SftpUploadService sftpUploadService;
+
+    public CryptoOrchestrationService(DirectoryProperties directoryProperties,
+    								  OutwardEncLogRepo outwardEncLogRepository,
+                                      ZipUtility zipUtility,
+                                      SignatureUtility signatureUtility,
+                                      PgpEncryptionUtility pgpEncryptionUtility,
+                                      SftpUploadService sftpUploadService) {
+        this.directoryProperties = directoryProperties;
+        this.outwardEncLogRepository = outwardEncLogRepository;
+        this.zipUtility = zipUtility;
+        this.signatureUtility = signatureUtility;
+        this.pgpEncryptionUtility = pgpEncryptionUtility;
+        this.sftpUploadService = sftpUploadService;
+    }
+
+    public void processBatch(File batchFolder, String type, String batchFolderName, int totalNoOfRecords) {
+        String referenceNumber = "SBIN" + UUID.randomUUID().toString().replace("-", "").substring(0, 10).toUpperCase();
+        
+        OutwardEncLog encLog = new OutwardEncLog();
+        encLog.setReferenceNumber(referenceNumber);
+        encLog.setFileName(batchFolderName);
+        encLog.setFileType(type);
+        encLog.setTotalNoOfRecords(totalNoOfRecords);
+        encLog.setZone("OTH");
+        encLog.setEntryDate(new Date(System.currentTimeMillis()));
+        encLog.setFileCopiedTime(LocalDateTime.now());
+        encLog.setLastUpdatedTime(LocalDateTime.now());
+
+        String sourcePath = batchFolder.getAbsolutePath();
+        Path zipFilePath = Paths.get(directoryProperties.getZipped(), batchFolderName + ".zip");
+        Path signedFilePath = Paths.get(directoryProperties.getSigned(), batchFolderName + ".zip");
+        Path encryptedFilePath = Paths.get(directoryProperties.getDestination(), batchFolderName + ".zip");
+
+        boolean isZipped = false;
+        boolean isSigned = false;
+        boolean isEncrypted = false;
+
+        try {
+            // 1. Zipping
+            zipUtility.zipFolder(Paths.get(sourcePath), zipFilePath);
+            isZipped = true;
+            updateLogStatus(encLog, ErrorConstants.ZIP_SUCCESS, ErrorConstants.ZIPPED_FILE);
+
+            // 2. Signing
+            signatureUtility.signAndWrapXml(zipFilePath, signedFilePath);
+            isSigned = true;
+            updateLogStatus(encLog, ErrorConstants.SIGN_SUCCESS, ErrorConstants.SIGNED_FILE);
+
+            // 3. Encrypting
+            pgpEncryptionUtility.encryptFile(signedFilePath, encryptedFilePath, batchFolderName + ".zip");
+            isEncrypted = true;
+            updateLogStatus(encLog, ErrorConstants.ENCRYPTION_SUCCESS, ErrorConstants.ENCRYPTED_FILE);
+            log.info("Successfully encrypted batch file: {}", batchFolderName);
+
+            // 4. SFTP Upload
+//            boolean uploadSuccess = sftpUploadService.uploadFile(type, encryptedFilePath);
+//            if (uploadSuccess) {
+//                log.info("Successfully uploaded {} to NPCI server", batchFolderName);
+//            } else {
+//                log.warn("SFTP Upload failed for {}", batchFolderName);
+//            }
+
+            // 5. Backup & Cleanup
+            createBackups(zipFilePath, encryptedFilePath, batchFolderName);
+            cleanupSourceFiles(Paths.get(sourcePath), zipFilePath, signedFilePath, encryptedFilePath);
+
+        } catch (Exception e) {
+            log.error("Crypto orchestration failed for batch: {}", batchFolderName, e);
+            handleFailure(encLog, batchFolderName, sourcePath, zipFilePath, signedFilePath, isZipped, isSigned, isEncrypted);
+        } finally {
+            encLog.setLastUpdatedTime(LocalDateTime.now());
+            outwardEncLogRepository.save(encLog);
+        }
+    }
+
+    private void updateLogStatus(OutwardEncLog logEntity, ErrorConstants status, ErrorConstants encType) {
+        logEntity.setStatus(status.toString());
+        logEntity.setStatusEnc(status.name());
+        logEntity.setEncryptionType(encType.toString());
+        logEntity.setLastUpdatedTime(LocalDateTime.now());
+        outwardEncLogRepository.save(logEntity);
+    }
+
+    private void handleFailure(OutwardEncLog encLog, String batchFolderName, String sourcePath, 
+                               Path zipFilePath, Path signedFilePath, 
+                               boolean isZipped, boolean isSigned, boolean isEncrypted) {
+        try {
+            if (!isZipped) {
+                updateLogStatus(encLog, ErrorConstants.ZIP_FAILURE, ErrorConstants.ZIPPED_FILE);
+                encLog.setErrorCode(ErrorConstants.ERR77.name());
+                Files.move(Paths.get(sourcePath), Paths.get(directoryProperties.getZippingFailed(), batchFolderName), StandardCopyOption.ATOMIC_MOVE);
+            } else if (!isSigned) {
+                updateLogStatus(encLog, ErrorConstants.SIGN_FAILURE, ErrorConstants.ZIPPED_FILE);
+                encLog.setErrorCode(ErrorConstants.ERR78.name());
+                zipUtility.deleteDirectory(Paths.get(sourcePath));
+                Files.move(zipFilePath, Paths.get(directoryProperties.getSigningFailed(), batchFolderName + ".zip"), StandardCopyOption.REPLACE_EXISTING);
+            } else if (!isEncrypted) {
+                updateLogStatus(encLog, ErrorConstants.ENCRYPTION_FAILURE, ErrorConstants.SIGNED_FILE);
+                encLog.setErrorCode(ErrorConstants.ERR79.name());
+                zipUtility.deleteDirectory(Paths.get(sourcePath));
+                Files.deleteIfExists(zipFilePath);
+                Files.move(signedFilePath, Paths.get(directoryProperties.getEncryptingFailed(), batchFolderName + ".zip"), StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            log.error("Failed to move files to failure directories for {}", batchFolderName, e);
+            throw new CryptoOperationException(AppConstants.TECHNICAL_ERROR.getValue(), "Failure cleanup handling aborted", e);
+        }
+    }
+
+    private void createBackups(Path zipFilePath, Path encryptedFilePath, String batchFolderName) throws IOException {
+        String currDate = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyyyy"));
+        
+        Path sourceBackupDir = Paths.get(directoryProperties.getBackup(), "SourceFilesBackUp", currDate);
+        Files.createDirectories(sourceBackupDir);
+        Files.copy(zipFilePath, sourceBackupDir.resolve(batchFolderName + ".zip"), StandardCopyOption.REPLACE_EXISTING);
+
+        Path encBackupDir = Paths.get(directoryProperties.getBackup(), "EncryptedFilesBackUp", currDate);
+        Files.createDirectories(encBackupDir);
+        Files.copy(encryptedFilePath, encBackupDir.resolve(batchFolderName + ".zip"), StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private void cleanupSourceFiles(Path sourcePath, Path zipFilePath, Path signedFilePath, Path encryptedFilePath) {
+        try {
+            zipUtility.deleteDirectory(sourcePath);
+            Files.deleteIfExists(zipFilePath);
+            Files.deleteIfExists(signedFilePath);
+            Files.deleteIfExists(encryptedFilePath);
+        } catch (IOException e) {
+            log.error("Failed to clean up intermediate files", e);
+        }
+    }
+}
