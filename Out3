@@ -1,0 +1,69 @@
+package com.tcs.aadesh.service;
+
+import com.tcs.aadesh.config.properties.DirectoryProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+
+@Service
+public class DirectoryPollingService {
+
+    private static final Logger log = LoggerFactory.getLogger(DirectoryPollingService.class);
+
+    private final FileBatchingService fileBatchingService;
+    private final DirectoryProperties directoryProperties;
+    private final ExecutorService fileProcessingExecutor;
+
+    public DirectoryPollingService(FileBatchingService fileBatchingService,
+                                   DirectoryProperties directoryProperties,
+                                   ExecutorService fileProcessingExecutor) {
+        this.fileBatchingService = fileBatchingService;
+        this.directoryProperties = directoryProperties;
+        this.fileProcessingExecutor = fileProcessingExecutor;
+    }
+
+    // Triggered by DirPolling-1 every 60 seconds
+    @Scheduled(fixedDelay = 60000) 
+    public void pollDirectories() {
+        log.info("Starting directory polling cycle...");
+
+        // Define the target sub-directories based on your source path
+        String basePath = directoryProperties.getSource();
+        List<Path> foldersToProcess = List.of(
+                Paths.get(basePath, "CREATE"),
+                Paths.get(basePath, "AMEND"),
+                Paths.get(basePath, "CANCEL")
+        );
+
+        // Hand off each folder to a separate worker thread
+        for (Path folder : foldersToProcess) {
+            // Ensure the folder exists before attempting to process it
+            if (Files.exists(folder) && Files.isDirectory(folder)) {
+                
+                // Submit the task to the pool-X-thread-Y executor
+                fileProcessingExecutor.execute(() -> {
+                    try {
+                        log.info("Worker thread {} is scanning folder: {}", 
+                                Thread.currentThread().getName(), folder.getFileName());
+                        
+                        fileBatchingService.processDirectory(folder);
+                        
+                    } catch (Exception e) {
+                        log.error("Failed to process directory: {}", folder.getFileName(), e);
+                    }
+                });
+                
+            } else {
+                log.warn("Directory does not exist, skipping: {}", folder);
+            }
+        }
+    }
+}
+
