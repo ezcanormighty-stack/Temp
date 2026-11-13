@@ -1027,3 +1027,285 @@ public class GlobalExceptionHandler {
 }
 
 
+package com.tcs.aadesh.util;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ZipUtility {
+
+    private static final Logger log = LoggerFactory.getLogger(ZipUtility.class);
+
+    /**
+     * Extracts ONLY .xml files from the provided ZIP archive.
+     * 
+     * @param zipFilePath Path to the decrypted zip file
+     * @param destDirPath Destination directory for extraction
+     * @return The number of XML files successfully extracted
+     * @throws IOException If an I/O error occurs
+     */
+    public int extractXmlFiles(Path zipFilePath, String destDirPath) throws IOException {
+        int extractedCount = 0;
+        File destDir = new File(destDirPath);
+
+        if (!destDir.exists() && !destDir.mkdirs()) {
+            throw new IOException("Failed to create destination directory: " + destDirPath);
+        }
+
+        try (ZipFile zipFile = new ZipFile(zipFilePath.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                
+                // Protect against Zip Slip (directory traversal attacks)
+                Path resolvedPath = destDir.toPath().resolve(entry.getName()).normalize();
+                if (!resolvedPath.startsWith(destDir.toPath())) {
+                    log.warn("Zip Slip vulnerability detected. Skipping entry: {}", entry.getName());
+                    continue;
+                }
+
+                // Per requirements, only process XML files and ignore TIFF/JPG entirely
+                if (!entry.isDirectory() && entry.getName().toLowerCase().endsWith(".xml")) {
+                    extractFile(zipFile, entry, resolvedPath.toFile());
+                    extractedCount++;
+                }
+            }
+        }
+        
+        log.info("Successfully extracted {} XML files from {}", extractedCount, zipFilePath.getFileName());
+        return extractedCount;
+    }
+
+    private void extractFile(ZipFile zipFile, ZipEntry entry, File destFile) throws IOException {
+        // Ensure parent directories exist
+        File parentDir = destFile.getParentFile();
+        if (!parentDir.exists() && !parentDir.mkdirs()) {
+            throw new IOException("Failed to create parent directories for: " + destFile.getAbsolutePath());
+        }
+
+        try (InputStream is = zipFile.getInputStream(entry);
+             FileOutputStream fos = new FileOutputStream(destFile)) {
+             
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
+        }
+    }
+}
+
+
+
+1. ZipUtility.java
+This utility handles the extraction of the decrypted ZIP archive. As requested, it diverges from the legacy image-handling logic to exclusively filter, extract, and count .xml files, while incorporating standard Zip Slip vulnerability protection for secure file processing.
+package com.tcs.aadesh.util;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ZipUtility {
+
+    private static final Logger log = LoggerFactory.getLogger(ZipUtility.class);
+
+    /**
+     * Extracts ONLY .xml files from the provided ZIP archive.
+     * 
+     * @param zipFilePath Path to the decrypted zip file
+     * @param destDirPath Destination directory for extraction
+     * @return The number of XML files successfully extracted
+     * @throws IOException If an I/O error occurs
+     */
+    public int extractXmlFiles(Path zipFilePath, String destDirPath) throws IOException {
+        int extractedCount = 0;
+        File destDir = new File(destDirPath);
+
+        if (!destDir.exists() && !destDir.mkdirs()) {
+            throw new IOException("Failed to create destination directory: " + destDirPath);
+        }
+
+        try (ZipFile zipFile = new ZipFile(zipFilePath.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                
+                // Protect against Zip Slip (directory traversal attacks)
+                Path resolvedPath = destDir.toPath().resolve(entry.getName()).normalize();
+                if (!resolvedPath.startsWith(destDir.toPath())) {
+                    log.warn("Zip Slip vulnerability detected. Skipping entry: {}", entry.getName());
+                    continue;
+                }
+
+                // Per requirements, only process XML files and ignore TIFF/JPG entirely
+                if (!entry.isDirectory() && entry.getName().toLowerCase().endsWith(".xml")) {
+                    extractFile(zipFile, entry, resolvedPath.toFile());
+                    extractedCount++;
+                }
+            }
+        }
+        
+        log.info("Successfully extracted {} XML files from {}", extractedCount, zipFilePath.getFileName());
+        return extractedCount;
+    }
+
+    private void extractFile(ZipFile zipFile, ZipEntry entry, File destFile) throws IOException {
+        // Ensure parent directories exist
+        File parentDir = destFile.getParentFile();
+        if (!parentDir.exists() && !parentDir.mkdirs()) {
+            throw new IOException("Failed to create parent directories for: " + destFile.getAbsolutePath());
+        }
+
+        try (InputStream is = zipFile.getInputStream(entry);
+             FileOutputStream fos = new FileOutputStream(destFile)) {
+             
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
+        }
+    }
+}
+
+2. CryptoUtility.java
+This utility centralizes the raw cryptographic functions stripped out of the legacy MandateUtility. It includes the AES-GCM decryption method (historically used for DB credentials and payload decryption) and the CMS Signature Verification via BouncyCastle, formatted into clean Spring-managed components.
+package com.tcs.aadesh.util;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
+import java.security.Security;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.Base64;
+import java.util.Collection;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.SignerInformation;
+import org.bouncycastle.cms.SignerInformationStore;
+import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import jakarta.annotation.PostConstruct;
+
+@Component
+public class CryptoUtility {
+
+    private static final Logger log = LoggerFactory.getLogger(CryptoUtility.class);
+    private static final String AES_ALGORITHM = "AES";
+    private static final String AES_TRANSFORMATION = "AES/GCM/NoPadding";
+
+    @PostConstruct
+    public void init() {
+        Security.addProvider(new BouncyCastleProvider());
+    }
+
+    /**
+     * Decrypts an AES/GCM/NoPadding encrypted string using Base64 encoded keys.
+     * Replaces legacy MandateUtility.aesDecrypt logic.
+     */
+    public String aesDecrypt(String base64Key, String base64Iv, String encryptedData) {
+        try {
+            byte[] key = Base64.getDecoder().decode(base64Key.getBytes(StandardCharsets.UTF_8));
+            byte[] iv = Base64.getDecoder().decode(base64Iv.getBytes(StandardCharsets.UTF_8));
+            byte[] cipherText = Base64.getDecoder().decode(encryptedData);
+
+            SecretKeySpec secretKeySpec = new SecretKeySpec(key, AES_ALGORITHM);
+            GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(128, iv);
+
+            Cipher cipher = Cipher.getInstance(AES_TRANSFORMATION);
+            cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, gcmParameterSpec);
+
+            byte[] decrypted = cipher.doFinal(cipherText);
+            
+            // Clean up null terminators if present from legacy encodings
+            return new String(decrypted, StandardCharsets.UTF_8).replaceAll("\0", "");
+            
+        } catch (Exception e) {
+            log.error("AES Decryption failed: {}", e.getMessage(), e);
+            throw new RuntimeException("AES Decryption failed", e);
+        }
+    }
+
+    /**
+     * Extracts an X.509 Certificate from a raw byte array.
+     */
+    public X509Certificate getX509Certificate(byte[] certBytes) throws CertificateException {
+        try (InputStream stream = new ByteArrayInputStream(certBytes)) {
+            CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+            return (X509Certificate) certificateFactory.generateCertificate(stream);
+        } catch (Exception e) {
+            log.error("Failed to generate X.509 Certificate", e);
+            throw new CertificateException("Failed to parse certificate data", e);
+        }
+    }
+
+    /**
+     * Verifies a digital signature against the original content using BouncyCastle CMS.
+     * Ported from legacy MandateUtility.verifysign.
+     */
+    public boolean verifySignature(String base64Signature, X509Certificate cert, String base64OrgContent) {
+        try {
+            byte[] signatureBytes = Base64.getDecoder().decode(base64Signature);
+            byte[] originalContentBytes = Base64.getDecoder().decode(base64OrgContent);
+
+            CMSProcessableByteArray cmsContent = new CMSProcessableByteArray(originalContentBytes);
+            CMSSignedData signedData = new CMSSignedData(cmsContent, signatureBytes);
+            
+            SignerInformationStore signerStore = signedData.getSignerInfos();
+            Collection<SignerInformation> signers = signerStore.getSigners();
+
+            boolean isValid = false;
+            for (SignerInformation signer : signers) {
+                if (signer.verify(new JcaSimpleSignerInfoVerifierBuilder().setProvider("BC").build(cert))) {
+                    isValid = true;
+                    break;
+                }
+            }
+            return isValid;
+            
+        } catch (Exception e) {
+            log.error("CMS Signature verification encountered an error: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+}
+
