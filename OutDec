@@ -964,3 +964,66 @@ public class PgpDecryptionService {
     }
 }
 
+
+
+package com.tcs.aadesh.exception;
+
+public class DecryptionFailedException extends RuntimeException {
+
+    private static final long serialVersionUID = 1L;
+
+    public DecryptionFailedException(String message) {
+        super(message);
+    }
+
+    public DecryptionFailedException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+
+
+This GlobalExceptionHandler adapts the centralized REST exception handling pattern from emante.txt.
+While your OutwardDecryptionOrchestrator natively catches and logs exceptions during its scheduled background polling, this class ensures that if you expose manual HTTP triggers (e.g., a REST endpoint to force a decryption run), any thrown exceptions are elegantly caught and translated into standard HTTP responses.
+package com.tcs.aadesh.exception.handler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import com.tcs.aadesh.constant.ErrorConstants;
+import com.tcs.aadesh.exception.DecryptionFailedException;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(DecryptionFailedException.class)
+    public ResponseEntity<String> handleDecryptionFailedException(DecryptionFailedException ex) {
+        log.error("Decryption operation failed: {}", ex.getMessage(), ex);
+        
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ErrorConstants.DECRYPTION_FAILURE.name() + ": " + ex.getMessage());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<String> handleIllegalArgumentException(IllegalArgumentException ex) {
+        log.error("Validation error: {}", ex.getMessage(), ex);
+        
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ErrorConstants.ERR02.name() + ": " + ex.getMessage());
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<String> handleGenericException(Exception ex) {
+        log.error("An unexpected system error occurred: {}", ex.getMessage(), ex);
+        
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ErrorConstants.FAILED_FILE.name() + ": A system error occurred. Please try again later.");
+    }
+}
+
+
