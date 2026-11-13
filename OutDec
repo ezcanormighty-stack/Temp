@@ -327,3 +327,253 @@ public enum AppConstants {
     }
 }
 
+1. OutwardDecLogId.java (Composite Key)
+Based on your outward encryption utility architecture, we drop the surrogate id column and use a composite primary key consisting of the filename and the last updated timestamp.
+package com.tcs.aadesh.entity;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
+import java.util.Objects;
+
+public class OutwardDecLogId implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    private String fileName;
+    private LocalDateTime lastUpdatedTime;
+
+    public OutwardDecLogId() {}
+
+    public OutwardDecLogId(String fileName, LocalDateTime lastUpdatedTime) {
+        this.fileName = fileName;
+        this.lastUpdatedTime = lastUpdatedTime;
+    }
+
+    public String getFileName() { return fileName; }
+    public void setFileName(String fileName) { this.fileName = fileName; }
+    public LocalDateTime getLastUpdatedTime() { return lastUpdatedTime; }
+    public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) { this.lastUpdatedTime = lastUpdatedTime; }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        OutwardDecLogId that = (OutwardDecLogId) o;
+        return Objects.equals(fileName, that.fileName) &&
+               Objects.equals(lastUpdatedTime, that.lastUpdatedTime);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(fileName, lastUpdatedTime);
+    }
+}
+
+2. OutwardDecLog.java (Main ZIP Log)
+This entity replaces the raw JDBC insert for insertintoMandate_logs.
+package com.tcs.aadesh.entity;
+
+import java.time.LocalDateTime;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.Table;
+
+@Entity
+@Table(name = "OUTWARD_DEC_LOGS")
+@IdClass(OutwardDecLogId.class)
+public class OutwardDecLog {
+
+    @Id
+    @Column(name = "FILE_NAME", length = 100)
+    private String fileName;
+
+    @Id
+    @Column(name = "LAST_UPDATED_TIME")
+    private LocalDateTime lastUpdatedTime;
+
+    @Column(name = "REFERENCE_NUMBER", length = 35)
+    private String referenceNumber;
+
+    @Column(name = "ENTRY_DATE")
+    private LocalDateTime entryDate = LocalDateTime.now();
+
+    @Column(name = "FILE_TYPE", length = 20)
+    private String fileType;
+
+    @Column(name = "ERROR_CODE", length = 10)
+    private String errorCode;
+
+    @Column(name = "ENCRYPTION_TYPE", length = 20)
+    private String encryptionType;
+
+    @Column(name = "TOTAL_NO_OF_RECORDS")
+    private Integer totalNoOfRecords;
+
+    @Column(name = "FILE_COPIED_TIME")
+    private LocalDateTime fileCopiedTime;
+
+    @Column(name = "STATUS", length = 50)
+    private String status;
+
+    @Column(name = "STATUS_DEC", length = 50)
+    private String statusDec;
+
+    @Column(name = "ZONE", length = 10)
+    private String zone;
+
+    // Getters and Setters
+    public String getFileName() { return fileName; }
+    public void setFileName(String fileName) { this.fileName = fileName; }
+    public LocalDateTime getLastUpdatedTime() { return lastUpdatedTime; }
+    public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) { this.lastUpdatedTime = lastUpdatedTime; }
+    public String getReferenceNumber() { return referenceNumber; }
+    public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
+    public LocalDateTime getEntryDate() { return entryDate; }
+    public void setEntryDate(LocalDateTime entryDate) { this.entryDate = entryDate; }
+    public String getFileType() { return fileType; }
+    public void setFileType(String fileType) { this.fileType = fileType; }
+    public String getErrorCode() { return errorCode; }
+    public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
+    public String getEncryptionType() { return encryptionType; }
+    public void setEncryptionType(String encryptionType) { this.encryptionType = encryptionType; }
+    public Integer getTotalNoOfRecords() { return totalNoOfRecords; }
+    public void setTotalNoOfRecords(Integer totalNoOfRecords) { this.totalNoOfRecords = totalNoOfRecords; }
+    public LocalDateTime getFileCopiedTime() { return fileCopiedTime; }
+    public void setFileCopiedTime(LocalDateTime fileCopiedTime) { this.fileCopiedTime = fileCopiedTime; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public String getStatusDec() { return statusDec; }
+    public void setStatusDec(String statusDec) { this.statusDec = statusDec; }
+    public String getZone() { return zone; }
+    public void setZone(String zone) { this.zone = zone; }
+}
+
+3. OutwardDecFileLogId.java (Composite Key for Extracted XMLs)
+package com.tcs.aadesh.entity;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
+import java.util.Objects;
+
+public class OutwardDecFileLogId implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    private String xmlFileName;
+    private LocalDateTime lastUpdatedTime;
+
+    public OutwardDecFileLogId() {}
+
+    public OutwardDecFileLogId(String xmlFileName, LocalDateTime lastUpdatedTime) {
+        this.xmlFileName = xmlFileName;
+        this.lastUpdatedTime = lastUpdatedTime;
+    }
+
+    public String getXmlFileName() { return xmlFileName; }
+    public void setXmlFileName(String xmlFileName) { this.xmlFileName = xmlFileName; }
+    public LocalDateTime getLastUpdatedTime() { return lastUpdatedTime; }
+    public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) { this.lastUpdatedTime = lastUpdatedTime; }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        OutwardDecFileLogId that = (OutwardDecFileLogId) o;
+        return Objects.equals(xmlFileName, that.xmlFileName) &&
+               Objects.equals(lastUpdatedTime, that.lastUpdatedTime);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(xmlFileName, lastUpdatedTime);
+    }
+}
+
+4. OutwardDecFileLog.java (Extracted XML Log)
+This entity replaces the raw JDBC insert for insertintoMandate_file_logs.
+package com.tcs.aadesh.entity;
+
+import java.time.LocalDateTime;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.Table;
+
+@Entity
+@Table(name = "OUTWARD_DEC_FILE_LOGS")
+@IdClass(OutwardDecFileLogId.class)
+public class OutwardDecFileLog {
+
+    @Id
+    @Column(name = "XML_FILE_NAME", length = 100)
+    private String xmlFileName;
+
+    @Id
+    @Column(name = "LAST_UPDATED_TIME")
+    private LocalDateTime lastUpdatedTime;
+
+    @Column(name = "FOLDER_NAME", length = 100)
+    private String folderName;
+
+    @Column(name = "ZONE", length = 10)
+    private String zone;
+
+    @Column(name = "ERROR_CODE", length = 10)
+    private String errorCode;
+
+    @Column(name = "ENTRY_DATE")
+    private LocalDateTime entryDate = LocalDateTime.now();
+
+    @Column(name = "PROCESS_TYPE", length = 10)
+    private String processType = "DEC";
+
+    // Getters and Setters
+    public String getXmlFileName() { return xmlFileName; }
+    public void setXmlFileName(String xmlFileName) { this.xmlFileName = xmlFileName; }
+    public LocalDateTime getLastUpdatedTime() { return lastUpdatedTime; }
+    public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) { this.lastUpdatedTime = lastUpdatedTime; }
+    public String getFolderName() { return folderName; }
+    public void setFolderName(String folderName) { this.folderName = folderName; }
+    public String getZone() { return zone; }
+    public void setZone(String zone) { this.zone = zone; }
+    public String getErrorCode() { return errorCode; }
+    public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
+    public LocalDateTime getEntryDate() { return entryDate; }
+    public void setEntryDate(LocalDateTime entryDate) { this.entryDate = entryDate; }
+    public String getProcessType() { return processType; }
+    public void setProcessType(String processType) { this.processType = processType; }
+}
+
+5. Repositories
+These interfaces inherit from JpaRepository and provide the duplicate check method mapping you utilized in the outward encryption utility.
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import com.tcs.aadesh.entity.OutwardDecLog;
+import com.tcs.aadesh.entity.OutwardDecLogId;
+
+@Repository
+public interface OutwardDecLogRepository extends JpaRepository<OutwardDecLog, OutwardDecLogId> {
+    
+    // Validates if a ZIP file has already been successfully processed
+    boolean existsByFileNameAndErrorCodeIsNull(String fileName);
+}
+
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+import com.tcs.aadesh.entity.OutwardDecFileLog;
+import com.tcs.aadesh.entity.OutwardDecFileLogId;
+
+@Repository
+public interface OutwardDecFileLogRepository extends JpaRepository<OutwardDecFileLog, OutwardDecFileLogId> {
+    
+    // Validates if a specific XML file has already been successfully processed
+    boolean existsByXmlFileNameAndErrorCodeIsNull(String xmlFileName);
+}
+
