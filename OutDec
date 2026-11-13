@@ -187,3 +187,67 @@ public class SftpProperties {
 
 
 
+# application.yml
+
+decryption:
+  # ==========================================
+  # 1. Directory Properties
+  # ==========================================
+  directory:
+    source: "/AadeshApp/OutwardDecryption/Input/"
+    destination: "/AadeshApp/OutwardDecryption/Extracted/"
+    decrypted: "/AadeshApp/OutwardDecryption/Decrypted/"
+    backup: "/AadeshApp/OutwardDecryption/Backup/Original/"
+    output-backup: "/AadeshApp/OutwardDecryption/Backup/Processed/"
+    decryption-failed: "/AadeshApp/OutwardDecryption/Failed/Decryption/"
+    sign-verification-failed: "/AadeshApp/OutwardDecryption/Failed/Signature/"
+    duplicate-file: "/AadeshApp/OutwardDecryption/Failed/Duplicate/"
+    checking-cert: "/AadeshApp/OutwardDecryption/Cert/temp_cert.cer"
+
+  # ==========================================
+  # 2. Cryptographic Properties
+  # ==========================================
+  crypto:
+    public-key-path: "/AadeshApp/JAR/MandateDecryption/Keys/public_key.asc"
+    private-key-path: "/AadeshApp/JAR/MandateDecryption/Keys/private_key.asc"
+    password: "your_private_key_password"
+    key: "your_base64_encoded_aes_key"
+    iv: "your_base64_encoded_aes_iv"
+
+  # ==========================================
+  # 3. File Naming & Validation Properties
+  # ==========================================
+  name:
+    min-name-length: 15
+    max-name-length: 45
+    no-of-days: 5
+    only-encrypted: true
+
+  # ==========================================
+  # 4. SFTP Connection Properties
+  # ==========================================
+  sftp:
+    host: "10.0.0.123"
+    port: 22
+    username: "sftp_user"
+    server-private-key-path: "/AadeshApp/JAR/MandateDecryption/Keys/sftp_identity.key"
+    remote-dir: "/remote/npci/inward/"
+    local-dir: "/AadeshApp/OutwardDecryption/SFTP_Local/"
+    archive-dir: "/remote/npci/archive/"
+
+# --------------------------------------------
+# Spring Core Configuration
+# --------------------------------------------
+spring:
+  application:
+    name: outward-decryption-utility
+  # Configure your HikariCP database here for the logs table
+  datasource:
+    url: jdbc:oracle:thin:@//localhost:1521/ORCL
+    username: your_db_user
+    password: your_db_password
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
