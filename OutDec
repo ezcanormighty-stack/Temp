@@ -1309,3 +1309,396 @@ public class CryptoUtility {
     }
 }
 
+
+
+You are absolutely right. Since we split the monolithic properties class into DirectoryProperties, CryptoProperties, NameProperties, and SftpProperties, the orchestrator needs to be updated to inject and reference these specific components.
+Here is the updated OutwardDecryptionOrchestrator.java reflecting the new configuration structure:
+package com.tcs.aadesh.service;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.util.stream.Stream;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.config.properties.DirectoryProperties;
+import com.tcs.aadesh.config.properties.NameProperties;
+import com.tcs.aadesh.constant.ErrorConstants;
+import com.tcs.aadesh.entity.OutwardDecLog;
+import com.tcs.aadesh.exception.DecryptionFailedException;
+import com.tcs.aadesh.repository.OutwardDecLogRepository;
+import com.tcs.aadesh.util.ZipUtility;
+
+@Service
+public class OutwardDecryptionOrchestrator {
+
+    private static final Logger log = LoggerFactory.getLogger(OutwardDecryptionOrchestrator.class);
+
+    private final DirectoryProperties directoryProperties;
+    private final NameProperties nameProperties;
+    private final PgpDecryptionService pgpDecryptionService;
+    private final ZipUtility zipUtility;
+    private final OutwardDecLogRepository decLogRepository;
+
+    @Autowired
+    public OutwardDecryptionOrchestrator(
+            DirectoryProperties directoryProperties,
+            NameProperties nameProperties,
+            PgpDecryptionService pgpDecryptionService,
+            ZipUtility zipUtility,
+            OutwardDecLogRepository decLogRepository) {
+        this.directoryProperties = directoryProperties;
+        this.nameProperties = nameProperties;
+        this.pgpDecryptionService = pgpDecryptionService;
+        this.zipUtility = zipUtility;
+        this.decLogRepository = decLogRepository;
+    }
+
+    // Executes fixed-delay polling as configured via standard Spring Scheduling
+    @Scheduled(fixedDelayString = "${decryption.scheduler.delay:60000}")
+    public void processInputDirectory() {
+        Path sourceDir = Paths.get(directoryProperties.getSource());
+        
+        if (!Files.exists(sourceDir) || !Files.isDirectory(sourceDir)) {
+            log.warn("Source directory does not exist or is not a directory: {}", sourceDir);
+            return;
+        }
+
+        try (Stream<Path> paths = Files.list(sourceDir)) {
+            paths.filter(Files::isRegularFile)
+                 .filter(path -> path.toString().toLowerCase().endsWith(".zip"))
+                 .forEach(this::processSingleZipFile);
+        } catch (IOException e) {
+            log.error("Failed to read source directory: {}", sourceDir, e);
+        }
+    }
+
+    private void processSingleZipFile(Path zipFilePath) {
+        String fileName = zipFilePath.getFileName().toString();
+        log.info("------------------------------- New File picked up for Decryption: {} -------------------------------", fileName);
+        
+        OutwardDecLog decLog = initializeLog(fileName);
+
+        // 1. Validation: Check if previously processed successfully
+        if (decLogRepository.existsByFileNameAndErrorCodeIsNull(fileName)) {
+            log.info("File {} is already processed successfully. Moving to duplicate folder.", fileName);
+            moveFile(zipFilePath, directoryProperties.getDuplicateFile(), fileName);
+            
+            decLog.setStatus(ErrorConstants.FAILED_FILE.toString());
+            decLog.setErrorCode(ErrorConstants.ERR03.name());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+            decLogRepository.save(decLog);
+            return;
+        }
+
+        // 2. Validation: Filename length constraints
+        if (fileName.length() < nameProperties.getMinNameLength() || 
+            fileName.length() > nameProperties.getMaxNameLength()) {
+            
+            log.error("Filename validation failed for {}. Moving to Name Validation Failed path.", fileName);
+            moveFile(zipFilePath, directoryProperties.getSignVerificationFailed(), fileName); // Utilizing an existing failed path
+            
+            decLog.setStatus(ErrorConstants.FAILED_FILE.toString());
+            decLog.setErrorCode(ErrorConstants.ERR01.name());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+            decLogRepository.save(decLog);
+            return;
+        }
+
+        try {
+            decLog.setStatus(ErrorConstants.FILE_PICKED_FOR_DECRYPTION.toString());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+            decLogRepository.save(decLog);
+
+            // 3. PGP Decryption
+            log.info("Initiating PGP decryption for {}", fileName);
+            Path decryptedZip = pgpDecryptionService.decryptFile(zipFilePath, directoryProperties.getDecrypted());
+            
+            decLog.setStatus(ErrorConstants.DECRYPTED_UNSIGN_PENDING.toString());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+            decLogRepository.save(decLog);
+
+            // 4. Unzip ONLY XML files (dropping images per requirement)
+            log.info("Extracting XML files from decrypted zip {}", decryptedZip.getFileName());
+            int xmlFilesExtracted = zipUtility.extractXmlFiles(decryptedZip, directoryProperties.getDestination());
+            
+            decLog.setTotalNoOfRecords(xmlFilesExtracted);
+            decLog.setStatus(ErrorConstants.UNZIP_SUCCESS.toString());
+            decLog.setStatusDec(ErrorConstants.DECRYPTION_SUCCESS.name());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+            
+            // 5. Backup and cleanup
+            backupProcessedFile(zipFilePath, fileName);
+            Files.deleteIfExists(decryptedZip); // Cleanup intermediate decrypted ZIP
+            
+            log.info("Successfully processed and backed up file: {}", fileName);
+
+        } catch (DecryptionFailedException e) {
+            log.error("Decryption pipeline failed for file: {}", fileName, e);
+            moveFile(zipFilePath, directoryProperties.getDecryptionFailed(), fileName);
+            
+            decLog.setStatus(ErrorConstants.DECRYPTION_FAILURE.toString());
+            decLog.setStatusDec(ErrorConstants.DECRYPTION_FAILURE.name());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+            
+        } catch (Exception e) {
+            log.error("Unexpected error processing file: {}", fileName, e);
+            moveFile(zipFilePath, directoryProperties.getDecryptionFailed(), fileName);
+            
+            decLog.setStatus(ErrorConstants.FAILED_FILE.toString());
+            decLog.setLastUpdatedTime(LocalDateTime.now());
+        } finally {
+            decLogRepository.save(decLog);
+        }
+    }
+
+    private OutwardDecLog initializeLog(String fileName) {
+        OutwardDecLog decLog = new OutwardDecLog();
+        decLog.setFileName(fileName);
+        decLog.setFileCopiedTime(LocalDateTime.now());
+        decLog.setLastUpdatedTime(LocalDateTime.now());
+        decLog.setEncryptionType(ErrorConstants.ENCRYPTED_FILE.toString());
+        
+        // Derive File Type based on standard NPCI naming conventions
+        if (fileName.contains("-CREATE-")) {
+            decLog.setFileType(ErrorConstants.CREATE_FILE_TYPE.toString());
+        } else if (fileName.contains("-AMEND-")) {
+            decLog.setFileType(ErrorConstants.AMEND_FILE_TYPE.toString());
+        } else if (fileName.contains("-CANCEL-")) {
+            decLog.setFileType(ErrorConstants.CANCEL_FILE_TYPE.toString());
+        } else {
+            decLog.setFileType("UNKNOWN");
+        }
+        
+        return decLog;
+    }
+
+    private void backupProcessedFile(Path sourceFilePath, String fileName) throws IOException {
+        String subFolder = "UNKNOWN";
+        if (fileName.contains("-CREATE-")) subFolder = "CREATE";
+        else if (fileName.contains("-AMEND-")) subFolder = "AMEND";
+        else if (fileName.contains("-CANCEL-")) subFolder = "CANCEL";
+
+        Path backupDir = Paths.get(directoryProperties.getBackup(), subFolder);
+        if (!Files.exists(backupDir)) {
+            Files.createDirectories(backupDir);
+        }
+
+        Path backupFile = backupDir.resolve(fileName);
+        Files.move(sourceFilePath, backupFile, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private void moveFile(Path sourceFilePath, String targetDirectoryPath, String fileName) {
+        try {
+            Path targetDir = Paths.get(targetDirectoryPath);
+            if (!Files.exists(targetDir)) {
+                Files.createDirectories(targetDir);
+            }
+            Files.move(sourceFilePath, targetDir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            log.error("Failed to move file {} to {}", fileName, targetDirectoryPath, e);
+        }
+    }
+}
+
+
+
+package com.tcs.aadesh.service;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Security;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.util.Date;
+import java.util.Iterator;
+
+import org.apache.commons.io.FileUtils;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPCompressedData;
+import org.bouncycastle.openpgp.PGPEncryptedDataList;
+import org.bouncycastle.openpgp.PGPException;
+import org.bouncycastle.openpgp.PGPLiteralData;
+import org.bouncycastle.openpgp.PGPObjectFactory;
+import org.bouncycastle.openpgp.PGPPrivateKey;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.PGPPublicKeyEncryptedData;
+import org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory;
+import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter;
+import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyDataDecryptorFactoryBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.config.properties.CryptoProperties;
+import com.tcs.aadesh.exception.DecryptionFailedException;
+
+import jakarta.annotation.PostConstruct;
+
+@Service
+public class PgpDecryptionService {
+
+    private static final Logger log = LoggerFactory.getLogger(PgpDecryptionService.class);
+
+    private final CryptoProperties cryptoProperties;
+    
+    private PGPPrivateKey pgpPrivateKey;
+
+    @Autowired
+    public PgpDecryptionService(CryptoProperties cryptoProperties) {
+        this.cryptoProperties = cryptoProperties;
+    }
+
+    @PostConstruct
+    public void initializeKeys() {
+        log.info("Initializing PGP Keys from PKCS12 Keystore and X.509 Certificate...");
+        Security.addProvider(new BouncyCastleProvider());
+        
+        try {
+            // 1. Load Public Key from Certificate
+            CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+            PublicKey publicKey;
+            try (FileInputStream fis = new FileInputStream(cryptoProperties.getPublicKeyPath())) {
+                Certificate certificate = certFactory.generateCertificate(fis);
+                publicKey = certificate.getPublicKey();
+            }
+
+            // Convert to PGPPublicKey
+            PGPPublicKey pgpPublicKey = new JcaPGPKeyConverter()
+                    .getPGPPublicKey(PGPPublicKey.RSA_GENERAL, publicKey, new Date());
+
+            // 2. Load Private Key from PKCS12 Keystore
+            KeyStore keyStore = KeyStore.getInstance("PKCS12");
+            PrivateKey privateKey;
+            try (FileInputStream fis = new FileInputStream(cryptoProperties.getPrivateKeyPath())) {
+                keyStore.load(fis, cryptoProperties.getPassword().toCharArray());
+                String alias = keyStore.aliases().nextElement();
+                privateKey = (PrivateKey) keyStore.getKey(alias, cryptoProperties.getPassword().toCharArray());
+            }
+
+            // Convert to PGPPrivateKey using the associated public key
+            this.pgpPrivateKey = new JcaPGPKeyConverter()
+                    .getPGPPrivateKey(pgpPublicKey, privateKey);
+            
+            log.info("PGP Keys initialized successfully.");
+
+        } catch (Exception e) {
+            log.error("Failed to initialize PGP Keys", e);
+            throw new IllegalStateException("Could not load cryptographic keys during application startup", e);
+        }
+    }
+
+    /**
+     * Decrypts the PGP encrypted file and extracts the payload to the specified destination.
+     *
+     * @param encryptedFilePath The path to the encrypted ZIP file
+     * @param destDirPath       The destination directory for the decrypted file
+     * @return Path to the decrypted file
+     */
+    public Path decryptFile(Path encryptedFilePath, String destDirPath) {
+        String fileName = encryptedFilePath.getFileName().toString();
+        Path outputFilePath = Paths.get(destDirPath, fileName);
+
+        log.info("Starting PGP decryption for file: {}", fileName);
+
+        try (InputStream in = new BufferedInputStream(new FileInputStream(encryptedFilePath.toFile()))) {
+            InputStream decoderStream = org.bouncycastle.openpgp.PGPUtil.getDecoderStream(in);
+            PGPObjectFactory pgpFactory = new PGPObjectFactory(decoderStream, new JcaKeyFingerprintCalculator());
+
+            Object nextObject = pgpFactory.nextObject();
+            PGPEncryptedDataList encryptedDataList;
+
+            if (nextObject instanceof PGPEncryptedDataList) {
+                encryptedDataList = (PGPEncryptedDataList) nextObject;
+            } else {
+                encryptedDataList = (PGPEncryptedDataList) pgpFactory.nextObject();
+            }
+
+            if (encryptedDataList == null) {
+                throw new DecryptionFailedException("Failed to find PGPEncryptedDataList in stream for " + fileName);
+            }
+
+            PGPPublicKeyEncryptedData pbe = extractPublicKeyEncryptedData(encryptedDataList);
+
+            PublicKeyDataDecryptorFactory decryptorFactory = new JcePublicKeyDataDecryptorFactoryBuilder()
+                    .setProvider("BC")
+                    .setContentProvider("BC")
+                    .build(this.pgpPrivateKey);
+
+            try (InputStream clearStream = pbe.getDataStream(decryptorFactory)) {
+                PGPObjectFactory plainFactory = new PGPObjectFactory(clearStream, new JcaKeyFingerprintCalculator());
+                Object message = plainFactory.nextObject();
+
+                // Handle Compression Wrapper if present
+                if (message instanceof PGPCompressedData) {
+                    PGPCompressedData compressedData = (PGPCompressedData) message;
+                    PGPObjectFactory uncompressedFactory = new PGPObjectFactory(
+                            compressedData.getDataStream(), 
+                            new JcaKeyFingerprintCalculator()
+                    );
+                    message = uncompressedFactory.nextObject();
+                }
+
+                // Handle Literal Data (The actual file payload)
+                if (message instanceof PGPLiteralData) {
+                    PGPLiteralData literalData = (PGPLiteralData) message;
+                    try (InputStream uncStream = literalData.getInputStream()) {
+                        File outputFile = outputFilePath.toFile();
+                        FileUtils.copyInputStreamToFile(uncStream, outputFile);
+                    }
+                } else {
+                    throw new PGPException("Message is not a simple literal data packet. Found: " + message.getClass());
+                }
+
+                // Verify Integrity Protection
+                if (pbe.isIntegrityProtected() && !pbe.verify()) {
+                    throw new PGPException("Message failed integrity check: data may be corrupt or tampered with.");
+                }
+            }
+
+            log.info("Decryption successful. Decrypted file written to: {}", outputFilePath);
+            return outputFilePath;
+
+        } catch (PGPException e) {
+            log.error("PGP crypto failure while decrypting file: {}", fileName, e);
+            throw new DecryptionFailedException("PGP crypto failure: " + e.getMessage(), e);
+        } catch (IOException e) {
+            log.error("I/O error while decrypting file: {}", fileName, e);
+            throw new DecryptionFailedException("File access error during decryption", e);
+        }
+    }
+
+    private PGPPublicKeyEncryptedData extractPublicKeyEncryptedData(PGPEncryptedDataList encryptedDataList) throws PGPException {
+        @SuppressWarnings("unchecked")
+        Iterator<Object> it = encryptedDataList.getEncryptedDataObjects();
+        
+        while (it.hasNext()) {
+            Object obj = it.next();
+            if (obj instanceof PGPPublicKeyEncryptedData) {
+                return (PGPPublicKeyEncryptedData) obj;
+            }
+        }
+        
+        throw new PGPException("No PGPPublicKeyEncryptedData packets found in the encrypted payload.");
+    }
+}
+
+Would you like to build out the SFTP synchronization service using the new SftpProperties class next, or focus on the unzipped XML database logging?
