@@ -251,3 +251,79 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
       idle-timeout: 30000
+
+
+
+Here are the constants classes tailored for the outward decryption utility.
+1. ErrorConstants.java
+This enum preserves the exact status and error mappings from the legacy inward decryption utility to ensure compatibility with your database tables (like Outward file logs).
+package com.tcs.aadesh.constant;
+
+public enum ErrorConstants {
+    
+    // File Types
+    CREATE_FILE_TYPE("CREATE"),
+    AMEND_FILE_TYPE("AMEND"),
+    CANCEL_FILE_TYPE("CANCEL"),
+    
+    // Decryption & Processing Status Codes
+    FILE_PICKED_FOR_DECRYPTION("00"),
+    DECRYPTED_UNSIGN_PENDING("01"),
+    DECRYPTION_FAILURE("02"),
+    UNSIGN_SUCCESS("03"),
+    UNSIGN_FAILURE("04"),
+    UNZIP_SUCCESS("05"),
+    UNZIP_FAILURE("06"),
+    DECRYPTION_SUCCESS("07"),
+    
+    // Legacy Encryption/Zipping Status Codes (Retained for DB schema parity)
+    ENCRYPTION_SUCCESS("09"), 
+    ENCRYPTION_FAILURE("10"),
+    SIGN_SUCCESS("11"),
+    SIGN_FAILURE("12"),
+    ZIP_SUCCESS("13"),
+    ZIP_FAILURE("14"),
+    
+    // File State Flags
+    ENCRYPTED_FILE("31"),
+    SIGNED_FILE("32"),
+    ZIPPED_FILE("34"),
+    FAILED_FILE("35"),
+    
+    // Error Codes
+    ERR01("FILE_NAME_FAILED"),
+    ERR02("FILE_FORMAT_FAILED"),
+    ERR03("DATE_VALIDATION_FAILED");
+
+    private final String text;
+
+    private ErrorConstants(final String text) {
+        this.text = text;
+    }
+
+    @Override
+    public String toString() {
+        return this.text;
+    }
+}
+
+2. AppConstants.java
+This enum is adapted directly from the emante.txt architecture to maintain standard application-level definitions across your microservices.
+package com.tcs.aadesh.constant;
+
+public enum AppConstants {
+    
+    INST_NO("003"),
+    TECHNICAL_ERROR("AD002");
+
+    private final String value;
+
+    private AppConstants(String value) {
+        this.value = value;
+    }
+
+    public String getValue() {
+        return value;
+    }
+}
+
