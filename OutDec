@@ -1,0 +1,189 @@
+1. DirectoryProperties.java
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotBlank;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "decryption.directory", ignoreUnknownFields = false)
+public class DirectoryProperties {
+
+    @NotBlank(message = "Source path is required")
+    private String source;
+
+    @NotBlank(message = "Destination path is required")
+    private String destination;
+
+    @NotBlank(message = "Decrypted file path is required")
+    private String decrypted;
+
+    @NotBlank(message = "Backup path is required")
+    private String backup;
+
+    @NotBlank(message = "Decrypted backup path is required")
+    private String outputBackup;
+
+    @NotBlank(message = "Decryption failed path is required")
+    private String decryptionFailed;
+
+    @NotBlank(message = "Sign verification failed path is required")
+    private String signVerificationFailed;
+
+    @NotBlank(message = "Duplicate file path is required")
+    private String duplicateFile;
+
+    @NotBlank(message = "Checking cert path is required")
+    private String checkingCert;
+
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
+    public String getDestination() { return destination; }
+    public void setDestination(String destination) { this.destination = destination; }
+    public String getDecrypted() { return decrypted; }
+    public void setDecrypted(String decrypted) { this.decrypted = decrypted; }
+    public String getBackup() { return backup; }
+    public void setBackup(String backup) { this.backup = backup; }
+    public String getOutputBackup() { return outputBackup; }
+    public void setOutputBackup(String outputBackup) { this.outputBackup = outputBackup; }
+    public String getDecryptionFailed() { return decryptionFailed; }
+    public void setDecryptionFailed(String decryptionFailed) { this.decryptionFailed = decryptionFailed; }
+    public String getSignVerificationFailed() { return signVerificationFailed; }
+    public void setSignVerificationFailed(String signVerificationFailed) { this.signVerificationFailed = signVerificationFailed; }
+    public String getDuplicateFile() { return duplicateFile; }
+    public void setDuplicateFile(String duplicateFile) { this.duplicateFile = duplicateFile; }
+    public String getCheckingCert() { return checkingCert; }
+    public void setCheckingCert(String checkingCert) { this.checkingCert = checkingCert; }
+}
+
+2. CryptoProperties.java
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotBlank;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "decryption.crypto", ignoreUnknownFields = false)
+public class CryptoProperties {
+
+    @NotBlank(message = "Public key path is required")
+    private String publicKeyPath;
+
+    @NotBlank(message = "Private key path is required")
+    private String privateKeyPath;
+
+    @NotBlank(message = "Password is required")
+    private String password;
+
+    @NotBlank(message = "AES Key is required")
+    private String key;
+
+    @NotBlank(message = "AES IV is required")
+    private String iv;
+
+    public String getPublicKeyPath() { return publicKeyPath; }
+    public void setPublicKeyPath(String publicKeyPath) { this.publicKeyPath = publicKeyPath; }
+    public String getPrivateKeyPath() { return privateKeyPath; }
+    public void setPrivateKeyPath(String privateKeyPath) { this.privateKeyPath = privateKeyPath; }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
+    public String getKey() { return key; }
+    public void setKey(String key) { this.key = key; }
+    public String getIv() { return iv; }
+    public void setIv(String iv) { this.iv = iv; }
+}
+
+3. NameProperties.java
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.Min;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "decryption.name", ignoreUnknownFields = false)
+public class NameProperties {
+
+    @Min(value = 1, message = "Minimum name length must be configured")
+    private int minNameLength;
+
+    @Min(value = 1, message = "Maximum name length must be configured")
+    private int maxNameLength;
+
+    @Min(value = 0, message = "Number of allowed history days must be configured")
+    private int noOfDays;
+    
+    private boolean onlyEncrypted;
+
+    public int getMinNameLength() { return minNameLength; }
+    public void setMinNameLength(int minNameLength) { this.minNameLength = minNameLength; }
+    public int getMaxNameLength() { return maxNameLength; }
+    public void setMaxNameLength(int maxNameLength) { this.maxNameLength = maxNameLength; }
+    public int getNoOfDays() { return noOfDays; }
+    public void setNoOfDays(int noOfDays) { this.noOfDays = noOfDays; }
+    public boolean isOnlyEncrypted() { return onlyEncrypted; }
+    public void setOnlyEncrypted(boolean onlyEncrypted) { this.onlyEncrypted = onlyEncrypted; }
+}
+
+4. SftpProperties.java
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotBlank;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "decryption.sftp", ignoreUnknownFields = false)
+public class SftpProperties {
+
+    @NotBlank(message = "SFTP Host is required")
+    private String host;
+
+    private int port = 22;
+
+    @NotBlank(message = "SFTP Username is required")
+    private String username;
+
+    @NotBlank(message = "SFTP Server private key path is required")
+    private String serverPrivateKeyPath;
+
+    @NotBlank(message = "Remote directory is required")
+    private String remoteDir;
+
+    @NotBlank(message = "Local directory is required")
+    private String localDir;
+
+    @NotBlank(message = "Archive directory is required")
+    private String archiveDir;
+
+    public String getHost() { return host; }
+    public void setHost(String host) { this.host = host; }
+    public int getPort() { return port; }
+    public void setPort(int port) { this.port = port; }
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
+    public String getServerPrivateKeyPath() { return serverPrivateKeyPath; }
+    public void setServerPrivateKeyPath(String serverPrivateKeyPath) { this.serverPrivateKeyPath = serverPrivateKeyPath; }
+    public String getRemoteDir() { return remoteDir; }
+    public void setRemoteDir(String remoteDir) { this.remoteDir = remoteDir; }
+    public String getLocalDir() { return localDir; }
+    public void setLocalDir(String localDir) { this.localDir = localDir; }
+    public String getArchiveDir() { return archiveDir; }
+    public void setArchiveDir(String archiveDir) { this.archiveDir = archiveDir; }
+}
+
+
+
