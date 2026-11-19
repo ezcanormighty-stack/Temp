@@ -117,3 +117,101 @@ private synchronized String getNextSequence(String currDate) {
 			return "000001";
 		}
 	}
+
+
+
+
+
+		String folderName = subFolder.getFileName().toString();
+		List<Path> allFiles = Files.list(subFolder).filter(Files::isRegularFile).toList();
+		int processedCount=0;
+
+		if (allFiles.isEmpty()) {
+			return;
+		}
+
+		Map<String, FileSet> groupedFiles = new HashMap<>();
+
+		for (Path file : allFiles) {
+			String fileName = file.getFileName().toString();
+			String[] parts = fileName.split("-");
+
+//            Check if file is already processed in outward file logs
+			boolean isAlreadyProcessed = outwardFileLogRepository.existsByFileNameAndErrorCodeIsNull(fileName);
+			if (isAlreadyProcessed) {
+				log.info("File is already processed, skipping : {}", fileName);
+				logFileStatus(fileName, folderName, ErrorConstants.ERR04.name(), "VALIDATION");
+				Files.move(Paths.get(directoryProperties.getSource(), parts[1], fileName),
+						Paths.get(directoryProperties.getNameValidationFailed(), fileName),
+						StandardCopyOption.REPLACE_EXISTING);
+				continue;
+			}
+
+			Matcher matcher = filePattern.matcher(fileName);
+			if (!matcher.find()) {
+				log.warn("Filename does not match expected pattern, skipping: {}", fileName);
+				logFileStatus(fileName, folderName, ErrorConstants.ERR01.name(), "VALIDATION");
+				Files.move(Paths.get(directoryProperties.getSource(), parts[1], fileName),
+						Paths.get(directoryProperties.getNameValidationFailed(), fileName),
+						StandardCopyOption.REPLACE_EXISTING);
+				continue;
+			}
+
+			String uniqueBaseName = matcher.group(1);
+			String fileDateStr = matcher.group(2);
+
+//            Check for date validation 
+			if (!isDateWithinAllowedRange(fileDateStr)) {
+				log.warn("File date {} is outside the allowed range of past {} days, skipping: {}", fileDateStr,
+						nameProperties.getAllowedHistoryDays(), fileName);
+				logFileStatus(fileName, folderName, ErrorConstants.ERR03.name(), "VALIDATION");
+				Files.move(Paths.get(directoryProperties.getSource(), parts[1], fileName),
+						Paths.get(directoryProperties.getNameValidationFailed(), fileName),
+						StandardCopyOption.REPLACE_EXISTING);
+				continue;
+			}
+
+			FileSet set = groupedFiles.computeIfAbsent(uniqueBaseName, FileSet::new);
+
+			String lowerName = fileName.toLowerCase();
+			if (lowerName.endsWith("-inp.xml")) {
+				set.setXmlFile(file);
+			} else if (lowerName.endsWith("_front.tif") || lowerName.endsWith("_front.tiff")) {
+				set.setTifFile(file);
+			} else if (lowerName.endsWith("_detailfront.jpg") || lowerName.endsWith("_detailfront.jpeg")) {
+				set.setJpgFile(file);
+			}
+		}
+
+		List<FileSet> validSets = new ArrayList<>();
+		for (FileSet set : groupedFiles.values()) {
+			if (set.isValidSet()) {
+				validSets.add(set);
+			} else if (folderName.equals("CANCEL") && set.isCancelSet()) {
+				validSets.add(set);
+			}
+		}
+		System.out.println(validSets.size());
+		int targetSets = batchProperties.getFileProcessLimit();
+
+		log.info("Found {} complete valid file sets in {}", validSets.size(), folderName);
+
+		while (validSets.size() - processedCount >= targetSets) {
+			List<FileSet> batchSets = new ArrayList<>(validSets.subList(processedCount, processedCount + targetSets));
+			createBatchAndProcess(batchSets, folderName);
+			processedCount += targetSets;
+		}
+
+//      EOD PROCESSING CODE 
+
+		LocalTime currTime = LocalTime.now();
+		LocalTime eodTime = LocalTime.parse(batchProperties.getEodTime(), DateTimeFormatter.ofPattern("HH:mm"));
+
+		if (processedCount < validSets.size() && !currTime.isBefore(eodTime)) {
+			List<FileSet> remainingSets = new ArrayList<>(validSets.subList(processedCount, validSets.size()));
+			createBatchAndProcess(remainingSets, folderName);
+			log.info("Processed a partial batch of {} remaining sets.", remainingSets.size());
+		}
+
+		log.info("Going to Sleep for 60 seconds");
+	
