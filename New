@@ -79,3 +79,41 @@ int processedCount = 0;
 			createBatchAndProcess(remainingSets, folderName);
 			log.info("Processed a partial batch of {} remaining sets.", remainingSets.size());
 		}
+
+
+
+
+
+private synchronized String getNextSequence(String currDate) {
+		Path seqFilePath = Paths.get(directoryProperties.getSequenceFilePath());
+		int seqNo = 1;
+
+		try {
+			if (Files.exists(seqFilePath)) {
+				String content = Files.readString(seqFilePath);
+				if (content.contains("-")) {
+					String[] parts = content.split("-");
+					String lastSeqStr = parts[0];
+					String lastDateStr = parts[1];
+
+					if (currDate.equals(lastDateStr)) {
+						seqNo = Integer.parseInt(lastSeqStr) + 1;
+					} else {
+						seqNo = 1;
+					}
+				}
+			} else {
+				if (seqFilePath.getParent() != null && !Files.exists(seqFilePath.getParent())) {
+					Files.createDirectories(seqFilePath.getParent());
+				}
+			}
+			String formattedSeq = String.format("%06d", seqNo);
+			String newContent = formattedSeq + "-" + currDate;
+			Files.writeString(seqFilePath, newContent);
+
+			return formattedSeq;
+		} catch (IOException | NumberFormatException e) {
+			log.error("Error reading or writing sequence file, defaulting sequence to 000001 : ", e);
+			return "000001";
+		}
+	}
