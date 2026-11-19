@@ -1,0 +1,52 @@
+# Spring Core Configuration
+spring:
+  application:
+    name: outward-decryption-utility
+  # Configure your HikariCP database here for the logs table
+  datasource:
+    url: jdbc:oracle:thin:@10.177.135.145:1535:DEVDB
+    username: Aadesh
+    password: Aadesh
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+
+# 1. Directory Properties
+directory:
+  source: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/SourceFiles/"
+  destination: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/OutputFiles/"
+  decrypted: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/DecryptedFiles/"
+  backup: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Backup/OriginalFile/"
+  output-backup: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Backup/DecryptedFile/"
+  decryption-failed: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/Decryption/"
+  sign-verification-failed: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/SignVerificationFailed/"
+  name-validation-failed: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/NameValidationFailed/"
+  duplicate-file: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/DuplicateFiles/"
+  checking-cert: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/checking_cert/temp_cert.cer"
+
+# 2. Cryptographic Properties
+crypto:
+  public-key-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Certificate/CHETAN_PUB.cer"
+  private-key-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Certificate/Aadesh.pfx"
+  password: "password"
+  key: "tIPr6vE4nRwzVHeIsApDO9N5Lo5lohB5XZTlirh1yvA="
+  iv: "AYEFyTcSaPmewXc+JPsGZA=="
+
+# 3. File Naming & Validation Properties
+name:
+  min-name-length: 15
+  max-name-length: 100
+  no-of-days: 5
+  only-encrypted: true
+
+# 4. SFTP Connection Properties
+sftp:
+  host: "10.191.66.59"
+  port: 22  
+  username: "sftpuser"
+  server-private-key-path: "/AadeshApp/JAR/MandateDecryption/Keys/sftp_identity.key"
+  remote-dir: "/remote/npci/inward/"
+  local-dir: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/SFTP_Local/"
+  archive-dir: "/remote/npci/archive/"
