@@ -1,0 +1,2391 @@
+================================================================================
+AADESH OUTWARD DECRYPTION UTILITY
+Spring Boot 3 & Java 21 Migration - Complete Conversation & Source Code Export
+================================================================================
+
+Base Package            : com.tcs.aadesh
+Target Stack            : Spring Boot 3, Java 21, Spring Data JPA, BouncyCastle, JSch
+Database Tables         : OUTWARD_DEC_LOGS, OUTWARD_FILE_LOGS
+Flat Output Directories : /Mandate (CREATE, AMEND, CANCEL) | /Pain_12 (PAIN12 RES)
+Export Date             : November 19, 2026
+
+================================================================================
+1. ARCHITECTURE & REQUIREMENTS EVOLUTION
+================================================================================
+
+[USER]
+Doc md.txt is the existing utility which I built using plain Java, where the task
+was to decrypt the files provided by NPCI containing XMLs. Now I want to build
+another utility where the goal is to decrypt a combination of XMLs. After
+unzipping, unsigning, and decryption, the result folder would have XMLs. Leave
+the filename validation for now. Instead of a plain Java app, I want to use
+Spring Boot and Java 21 for building this, following the organizational reference
+structure. Start with giving me the project structure.
+
+[SUMMARY]
+Migrating the plain Java NPCI decryption utility to Spring Boot 3 and Java 21
+shifts the architecture from manual thread management and raw JDBC to Spring
+Data JPA, @Scheduled tasks, validated @ConfigurationProperties, and modular
+services.
+
+[USER]
+The input will be a zip file and the output will be directly placed in the output
+folder, no subfolder of zip name will be created in this one. The input files are
+of 2 types:
+  1. CREATE, CANCEL, AMEND files
+  2. PAIN12 RES files
+The output folder has 2 subfolders for these:
+  1. Mandate
+  2. Pain_12
+
+[SUMMARY]
+To route extracted XMLs directly into specific flat subfolders without creating
+a ZIP-named parent folder:
+- FilePathProperties binds explicit output.mandatePath (/Mandate) and
+  output.pain12Path (/Pain_12) targets.
+- FileRoutingService resolves the destination based on filename classification.
+- ZipUtility performs flat extraction with UUID-based collision handling.
+
+[USER]
+What's the final structure? The tables would be outward dec logs and outward file
+logs, provide updated architecture.
+
+--------------------------------------------------------------------------------
+Final Project Directory Structure (com.tcs.aadesh)
+--------------------------------------------------------------------------------
+src/main/java/com/tcs/aadesh/
+├── AadeshOutwardDecApplication.java
+├── config/
+│   ├── ExecutorConfig.java
+│   └── properties/
+│       ├── CryptoProperties.java
+│       ├── FilePathProperties.java
+│       └── SftpProperties.java
+├── constant/
+│   ├── FileType.java
+│   └── ProcessingStatus.java
+├── entity/
+│   ├── OutwardDecLog.java
+│   ├── OutwardFileLog.java
+│   └── OutwardFileLogId.java
+├── exception/
+│   ├── CryptoProcessingException.java
+│   ├── SftpTransferException.java
+│   └── UnrecognizedFileTypeException.java
+├── repository/
+│   ├── OutwardDecLogRepository.java
+│   └── OutwardFileLogRepository.java
+├── scheduler/
+│   └── FilePollingScheduler.java
+├── service/
+│   ├── DecryptionOrchestratorService.java
+│   ├── FileRoutingService.java
+│   ├── SftpService.java
+│   └── SignatureVerificationService.java
+└── util/
+    ├── AesCredentialUtility.java
+    ├── ErrorLogger.java
+    ├── PgpCryptoUtility.java
+    └── ZipUtility.java
+
+--------------------------------------------------------------------------------
+End-to-End Processing Flow
+--------------------------------------------------------------------------------
+[SFTP Server] --(SftpService)--> [Source Dir]
+                                       |
+                        (FilePollingScheduler @Scheduled)
+                                       |
+                                       v
+                        [DecryptionOrchestratorService]
+                         |-- 1. Duplicate check --> OUTWARD_DEC_LOGS
+                         |-- 2. Route type --> FileRoutingService (Mandate vs Pain_12)
+                         |-- 3. PGP Decrypt --> PgpCryptoUtility
+                         |-- 4. Unsign/Verify --> SignatureVerificationService
+                         |-- 5. Flat Unzip --> ZipUtility --> /Output/Mandate/ or /Output/Pain_12/
+                         +-- 6. Audit & Backup --> OUTWARD_FILE_LOGS + OUTWARD_DEC_LOGS
+
+--------------------------------------------------------------------------------
+Component Summary
+--------------------------------------------------------------------------------
+- Bootstrap & Configuration: AadeshOutwardDecApplication (@EnableScheduling,
+  @ConfigurationPropertiesScan), ExecutorConfig (Spring-managed ExecutorService),
+  and validated @ConfigurationProperties classes (CryptoProperties,
+  FilePathProperties, SftpProperties).
+- Constants: FileType (CREATE, AMEND, CANCEL -> Mandate; PAIN12_RES -> Pain_12)
+  and ProcessingStatus (numeric lifecycle codes, encryption types, error codes).
+- Persistence Layer: OutwardDecLog (OUTWARD_DEC_LOGS), OutwardFileLog +
+  OutwardFileLogId (OUTWARD_FILE_LOGS), and Spring Data JPA repositories with
+  duplicate-file lookup.
+- Scheduling & Services: FilePollingScheduler, SftpService, FileRoutingService,
+  SignatureVerificationService, and DecryptionOrchestratorService.
+- Exceptions & Utilities: CryptoProcessingException, SftpTransferException,
+  UnrecognizedFileTypeException, AesCredentialUtility, ErrorLogger,
+  PgpCryptoUtility, and ZipUtility.
+
+================================================================================
+2. BOOTSTRAP & CONFIGURATION
+================================================================================
+
+--------------------------------------------------------------------------------
+File: AadeshOutwardDecApplication.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@EnableScheduling
+@ConfigurationPropertiesScan
+@SpringBootApplication
+public class AadeshOutwardDecApplication {
+	private static final Logger log = LoggerFactory.getLogger(AadeshOutwardDecApplication.class);
+
+	public static void main(String[] args) {
+		try {
+			SpringApplication.run(AadeshOutwardDecApplication.class, args);
+			log.info("******************************** || AADESH_ACH_MANDATE_DEC UTILITY STARTED || ***********************************");
+		} catch (Exception e) {
+			log.error("Application failed to start", e);
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: config/ExecutorConfig.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.config;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class ExecutorConfig {
+
+	@Value("${app.executor.pool-size:4}")
+	private int poolSize;
+
+	@Bean(destroyMethod = "shutdown")
+	public ExecutorService decryptionExecutor() {
+		return Executors.newFixedThreadPool(poolSize);
+	}
+}
+
+--------------------------------------------------------------------------------
+File: config/properties/CryptoProperties.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "crypto", ignoreUnknownFields = false)
+public class CryptoProperties {
+
+	@Valid
+	@NotNull
+	private Pgp pgp = new Pgp();
+
+	@Valid
+	@NotNull
+	private Aes aes = new Aes();
+
+	public Pgp getPgp() {
+		return pgp;
+	}
+
+	public void setPgp(Pgp pgp) {
+		this.pgp = pgp;
+	}
+
+	public Aes getAes() {
+		return aes;
+	}
+
+	public void setAes(Aes aes) {
+		this.aes = aes;
+	}
+
+	public static class Pgp {
+
+		@NotBlank(message = "'crypto.pgp.public-key-path' must be set and cannot be empty")
+		private String publicKeyPath;
+
+		@NotBlank(message = "'crypto.pgp.private-key-path' must be set and cannot be empty")
+		private String privateKeyPath;
+
+		@NotBlank(message = "'crypto.pgp.password' must be set and cannot be empty")
+		private String password;
+
+		@NotBlank(message = "'crypto.pgp.checking-cert-path' must be set and cannot be empty")
+		private String checkingCertPath;
+
+		private boolean allowUnencrypted = false;
+
+		public String getPublicKeyPath() {
+			return publicKeyPath;
+		}
+
+		public void setPublicKeyPath(String publicKeyPath) {
+			this.publicKeyPath = publicKeyPath;
+		}
+
+		public String getPrivateKeyPath() {
+			return privateKeyPath;
+		}
+
+		public void setPrivateKeyPath(String privateKeyPath) {
+			this.privateKeyPath = privateKeyPath;
+		}
+
+		public String getPassword() {
+			return password;
+		}
+
+		public void setPassword(String password) {
+			this.password = password;
+		}
+
+		public String getCheckingCertPath() {
+			return checkingCertPath;
+		}
+
+		public void setCheckingCertPath(String checkingCertPath) {
+			this.checkingCertPath = checkingCertPath;
+		}
+
+		public boolean isAllowUnencrypted() {
+			return allowUnencrypted;
+		}
+
+		public void setAllowUnencrypted(boolean allowUnencrypted) {
+			this.allowUnencrypted = allowUnencrypted;
+		}
+	}
+
+	public static class Aes {
+
+		@NotBlank(message = "'crypto.aes.key' must be set and cannot be empty")
+		private String key;
+
+		@NotBlank(message = "'crypto.aes.iv' must be set and cannot be empty")
+		private String iv;
+
+		public String getKey() {
+			return key;
+		}
+
+		public void setKey(String key) {
+			this.key = key;
+		}
+
+		public String getIv() {
+			return iv;
+		}
+
+		public void setIv(String iv) {
+			this.iv = iv;
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: config/properties/FilePathProperties.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "file.paths", ignoreUnknownFields = false)
+public class FilePathProperties {
+
+	@NotBlank(message = "'file.paths.source-path' must be set and cannot be empty")
+	private String sourcePath;
+
+	@NotBlank(message = "'file.paths.decrypted-temp-path' must be set and cannot be empty")
+	private String decryptedTempPath;
+
+	@NotBlank(message = "'file.paths.backup-path' must be set and cannot be empty")
+	private String backupPath;
+
+	@NotBlank(message = "'file.paths.output-backup-path' must be set and cannot be empty")
+	private String outputBackupPath;
+
+	@Valid
+	@NotNull
+	private Output output = new Output();
+
+	@Valid
+	@NotNull
+	private Failed failed = new Failed();
+
+	public String getSourcePath() {
+		return sourcePath;
+	}
+
+	public void setSourcePath(String sourcePath) {
+		this.sourcePath = sourcePath;
+	}
+
+	public String getDecryptedTempPath() {
+		return decryptedTempPath;
+	}
+
+	public void setDecryptedTempPath(String decryptedTempPath) {
+		this.decryptedTempPath = decryptedTempPath;
+	}
+
+	public String getBackupPath() {
+		return backupPath;
+	}
+
+	public void setBackupPath(String backupPath) {
+		this.backupPath = backupPath;
+	}
+
+	public String getOutputBackupPath() {
+		return outputBackupPath;
+	}
+
+	public void setOutputBackupPath(String outputBackupPath) {
+		this.outputBackupPath = outputBackupPath;
+	}
+
+	public Output getOutput() {
+		return output;
+	}
+
+	public void setOutput(Output output) {
+		this.output = output;
+	}
+
+	public Failed getFailed() {
+		return failed;
+	}
+
+	public void setFailed(Failed failed) {
+		this.failed = failed;
+	}
+
+	public static class Output {
+
+		@NotBlank(message = "'file.paths.output.mandate-path' must be set and cannot be empty")
+		private String mandatePath;
+
+		@NotBlank(message = "'file.paths.output.pain12-path' must be set and cannot be empty")
+		private String pain12Path;
+
+		public String getMandatePath() {
+			return mandatePath;
+		}
+
+		public void setMandatePath(String mandatePath) {
+			this.mandatePath = mandatePath;
+		}
+
+		public String getPain12Path() {
+			return pain12Path;
+		}
+
+		public void setPain12Path(String pain12Path) {
+			this.pain12Path = pain12Path;
+		}
+	}
+
+	public static class Failed {
+
+		@NotBlank(message = "'file.paths.failed.decryption-failed-path' must be set and cannot be empty")
+		private String decryptionFailedPath;
+
+		@NotBlank(message = "'file.paths.failed.sign-not-verified-path' must be set and cannot be empty")
+		private String signNotVerifiedPath;
+
+		@NotBlank(message = "'file.paths.failed.data-extraction-failed-path' must be set and cannot be empty")
+		private String dataExtractionFailedPath;
+
+		@NotBlank(message = "'file.paths.failed.not-a-zip-path' must be set and cannot be empty")
+		private String notAZipPath;
+
+		@NotBlank(message = "'file.paths.failed.duplicate-file-path' must be set and cannot be empty")
+		private String duplicateFilePath;
+
+		@NotBlank(message = "'file.paths.failed.unrecognized-type-path' must be set and cannot be empty")
+		private String unrecognizedTypePath;
+
+		public String getDecryptionFailedPath() {
+			return decryptionFailedPath;
+		}
+
+		public void setDecryptionFailedPath(String decryptionFailedPath) {
+			this.decryptionFailedPath = decryptionFailedPath;
+		}
+
+		public String getSignNotVerifiedPath() {
+			return signNotVerifiedPath;
+		}
+
+		public void setSignNotVerifiedPath(String signNotVerifiedPath) {
+			this.signNotVerifiedPath = signNotVerifiedPath;
+		}
+
+		public String getDataExtractionFailedPath() {
+			return dataExtractionFailedPath;
+		}
+
+		public void setDataExtractionFailedPath(String dataExtractionFailedPath) {
+			this.dataExtractionFailedPath = dataExtractionFailedPath;
+		}
+
+		public String getNotAZipPath() {
+			return notAZipPath;
+		}
+
+		public void setNotAZipPath(String notAZipPath) {
+			this.notAZipPath = notAZipPath;
+		}
+
+		public String getDuplicateFilePath() {
+			return duplicateFilePath;
+		}
+
+		public void setDuplicateFilePath(String duplicateFilePath) {
+			this.duplicateFilePath = duplicateFilePath;
+		}
+
+		public String getUnrecognizedTypePath() {
+			return unrecognizedTypePath;
+		}
+
+		public void setUnrecognizedTypePath(String unrecognizedTypePath) {
+			this.unrecognizedTypePath = unrecognizedTypePath;
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: config/properties/SftpProperties.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "sftp", ignoreUnknownFields = false)
+public class SftpProperties {
+
+	private boolean enabled = true;
+
+	@NotBlank(message = "'sftp.host' must be set and cannot be empty")
+	private String host;
+
+	@Min(value = 1, message = "'sftp.port' must be between 1 and 65535")
+	@Max(value = 65535, message = "'sftp.port' must be between 1 and 65535")
+	private int port = 22;
+
+	@NotBlank(message = "'sftp.username' must be set and cannot be empty")
+	private String username;
+
+	private String password;
+
+	@NotBlank(message = "'sftp.private-key-path' must be set and cannot be empty")
+	private String privateKeyPath;
+
+	@NotBlank(message = "'sftp.remote-dir' must be set and cannot be empty")
+	private String remoteDir;
+
+	@NotBlank(message = "'sftp.local-dir' must be set and cannot be empty")
+	private String localDir;
+
+	@NotBlank(message = "'sftp.archive-dir' must be set and cannot be empty")
+	private String archiveDir;
+
+	public boolean isEnabled() {
+		return enabled;
+	}
+
+	public void setEnabled(boolean enabled) {
+		this.enabled = enabled;
+	}
+
+	public String getHost() {
+		return host;
+	}
+
+	public void setHost(String host) {
+		this.host = host;
+	}
+
+	public int getPort() {
+		return port;
+	}
+
+	public void setPort(int port) {
+		this.port = port;
+	}
+
+	public String getUsername() {
+		return username;
+	}
+
+	public void setUsername(String username) {
+		this.username = username;
+	}
+
+	public String getPassword() {
+		return password;
+	}
+
+	public void setPassword(String password) {
+		this.password = password;
+	}
+
+	public String getPrivateKeyPath() {
+		return privateKeyPath;
+	}
+
+	public void setPrivateKeyPath(String privateKeyPath) {
+		this.privateKeyPath = privateKeyPath;
+	}
+
+	public String getRemoteDir() {
+		return remoteDir;
+	}
+
+	public void setRemoteDir(String remoteDir) {
+		this.remoteDir = remoteDir;
+	}
+
+	public String getLocalDir() {
+		return localDir;
+	}
+
+	public void setLocalDir(String localDir) {
+		this.localDir = localDir;
+	}
+
+	public String getArchiveDir() {
+		return archiveDir;
+	}
+
+	public void setArchiveDir(String archiveDir) {
+		this.archiveDir = archiveDir;
+	}
+}
+
+================================================================================
+3. CONSTANTS
+================================================================================
+
+--------------------------------------------------------------------------------
+File: constant/FileType.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.constant;
+
+public enum FileType {
+	CREATE("CREATE", "Mandate"),
+	AMEND("AMEND", "Mandate"),
+	CANCEL("CANCEL", "Mandate"),
+	PAIN12_RES("PAIN12_RES", "Pain_12");
+
+	private final String value;
+	private final String outputSubfolder;
+
+	FileType(String value, String outputSubfolder) {
+		this.value = value;
+		this.outputSubfolder = outputSubfolder;
+	}
+
+	public String getValue() {
+		return value;
+	}
+
+	public String getOutputSubfolder() {
+		return outputSubfolder;
+	}
+}
+
+--------------------------------------------------------------------------------
+File: constant/ProcessingStatus.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.constant;
+
+public enum ProcessingStatus {
+	// Decryption & Extraction Lifecycle
+	FILE_PICKED_FOR_DECRYPTION("00", "FILE_PICKED_FOR_DECRYPTION"),
+	DECRYPTED_UNSIGN_PENDING("01", "DECRYPTED_UNSIGN_PENDING"),
+	DECRYPTION_FAILURE("02", "DECRYPTION_FAILURE"),
+	UNSIGN_SUCCESS("03", "UNSIGN_SUCCESS"),
+	UNSIGN_FAILURE("04", "UNSIGN_FAILURE"),
+	UNZIP_SUCCESS("05", "UNZIP_SUCCESS"),
+	UNZIP_FAILURE("06", "UNZIP_FAILURE"),
+	DECRYPTION_SUCCESS("07", "DECRYPTION_SUCCESS"),
+	FAILED_FILE("35", "FAILED_FILE"),
+
+	// Input File Encryption Types
+	ENCRYPTED_FILE("31", "ENCRYPTED_FILE"),
+	SIGNED_FILE("32", "SIGNED_FILE"),
+	ZIPPED_FILE("34", "ZIPPED_FILE"),
+
+	// Validation & Routing Error Codes
+	ERR01("ERR01", "FILE_NAME_FAILED"),
+	ERR02("ERR02", "FILE_FORMAT_FAILED"),
+	ERR03("ERR03", "DATE_VALIDATION_FAILED"),
+	ERR04("ERR04", "UNRECOGNIZED_FILE_TYPE");
+
+	private final String code;
+	private final String description;
+
+	ProcessingStatus(String code, String description) {
+		this.code = code;
+		this.description = description;
+	}
+
+	public String getCode() {
+		return code;
+	}
+
+	public String getDescription() {
+		return description;
+	}
+}
+
+================================================================================
+4. PERSISTENCE LAYER (ENTITIES & REPOSITORIES)
+================================================================================
+
+--------------------------------------------------------------------------------
+File: entity/OutwardDecLog.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.entity;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Objects;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+
+@Entity
+@Table(name = "OUTWARD_DEC_LOGS")
+public class OutwardDecLog {
+
+	@Id
+	@Column(name = "REFERENCE_NUMBER", length = 35)
+	private String referenceNumber;
+
+	@Column(name = "ENTRY_DATE")
+	private LocalDate entryDate;
+
+	@Column(name = "FILE_NAME", length = 100)
+	private String fileName;
+
+	@Column(name = "FILE_TYPE", length = 20)
+	private String fileType;
+
+	@Column(name = "ERROR_CODE", length = 10)
+	private String errorCode;
+
+	@Column(name = "ENCRYPTION_TYPE", length = 30)
+	private String encryptionType;
+
+	@Column(name = "TOTAL_RECORDS")
+	private Integer totalRecords;
+
+	@Column(name = "FILE_COPIED_TIME")
+	private LocalDateTime fileCopiedTime;
+
+	@Column(name = "STATUS", length = 50)
+	private String status;
+
+	@Column(name = "STATUS_DEC", length = 50)
+	private String statusDec;
+
+	@Column(name = "LAST_UPDATED_TIME")
+	private LocalDateTime lastUpdatedTime;
+
+	@Column(name = "ZONE", length = 10)
+	private String zone;
+
+	public OutwardDecLog() {
+	}
+
+	public String getReferenceNumber() {
+		return referenceNumber;
+	}
+
+	public void setReferenceNumber(String referenceNumber) {
+		this.referenceNumber = referenceNumber;
+	}
+
+	public LocalDate getEntryDate() {
+		return entryDate;
+	}
+
+	public void setEntryDate(LocalDate entryDate) {
+		this.entryDate = entryDate;
+	}
+
+	public String getFileName() {
+		return fileName;
+	}
+
+	public void setFileName(String fileName) {
+		this.fileName = fileName;
+	}
+
+	public String getFileType() {
+		return fileType;
+	}
+
+	public void setFileType(String fileType) {
+		this.fileType = fileType;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getEncryptionType() {
+		return encryptionType;
+	}
+
+	public void setEncryptionType(String encryptionType) {
+		this.encryptionType = encryptionType;
+	}
+
+	public Integer getTotalRecords() {
+		return totalRecords;
+	}
+
+	public void setTotalRecords(Integer totalRecords) {
+		this.totalRecords = totalRecords;
+	}
+
+	public LocalDateTime getFileCopiedTime() {
+		return fileCopiedTime;
+	}
+
+	public void setFileCopiedTime(LocalDateTime fileCopiedTime) {
+		this.fileCopiedTime = fileCopiedTime;
+	}
+
+	public String getStatus() {
+		return status;
+	}
+
+	public void setStatus(String status) {
+		this.status = status;
+	}
+
+	public String getStatusDec() {
+		return statusDec;
+	}
+
+	public void setStatusDec(String statusDec) {
+		this.statusDec = statusDec;
+	}
+
+	public LocalDateTime getLastUpdatedTime() {
+		return lastUpdatedTime;
+	}
+
+	public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) {
+		this.lastUpdatedTime = lastUpdatedTime;
+	}
+
+	public String getZone() {
+		return zone;
+	}
+
+	public void setZone(String zone) {
+		this.zone = zone;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(referenceNumber);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null || getClass() != obj.getClass())
+			return false;
+		OutwardDecLog other = (OutwardDecLog) obj;
+		return Objects.equals(referenceNumber, other.referenceNumber);
+	}
+}
+
+--------------------------------------------------------------------------------
+File: entity/OutwardFileLog.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.entity;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Objects;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
+import jakarta.persistence.Table;
+
+@Entity
+@IdClass(OutwardFileLogId.class)
+@Table(name = "OUTWARD_FILE_LOGS")
+public class OutwardFileLog {
+
+	@Id
+	@Column(name = "XML_FILE_NAME", length = 150)
+	private String xmlFileName;
+
+	@Id
+	@Column(name = "FOLDER_NAME", length = 100)
+	private String folderName;
+
+	@Column(name = "ZONE", length = 10)
+	private String zone;
+
+	@Column(name = "ERROR_CODE", length = 10)
+	private String errorCode;
+
+	@Column(name = "ENTRY_DATE")
+	private LocalDate entryDate;
+
+	@Column(name = "LAST_UPDATED_TIME")
+	private LocalDateTime lastUpdatedTime;
+
+	@Column(name = "OPERATION_FLAG", length = 10)
+	private String operationFlag = "DEC";
+
+	public OutwardFileLog() {
+	}
+
+	public String getXmlFileName() {
+		return xmlFileName;
+	}
+
+	public void setXmlFileName(String xmlFileName) {
+		this.xmlFileName = xmlFileName;
+	}
+
+	public String getFolderName() {
+		return folderName;
+	}
+
+	public void setFolderName(String folderName) {
+		this.folderName = folderName;
+	}
+
+	public String getZone() {
+		return zone;
+	}
+
+	public void setZone(String zone) {
+		this.zone = zone;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public LocalDate getEntryDate() {
+		return entryDate;
+	}
+
+	public void setEntryDate(LocalDate entryDate) {
+		this.entryDate = entryDate;
+	}
+
+	public LocalDateTime getLastUpdatedTime() {
+		return lastUpdatedTime;
+	}
+
+	public void setLastUpdatedTime(LocalDateTime lastUpdatedTime) {
+		this.lastUpdatedTime = lastUpdatedTime;
+	}
+
+	public String getOperationFlag() {
+		return operationFlag;
+	}
+
+	public void setOperationFlag(String operationFlag) {
+		this.operationFlag = operationFlag;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(folderName, xmlFileName);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null || getClass() != obj.getClass())
+			return false;
+		OutwardFileLog other = (OutwardFileLog) obj;
+		return Objects.equals(folderName, other.folderName) && Objects.equals(xmlFileName, other.xmlFileName);
+	}
+}
+
+--------------------------------------------------------------------------------
+File: entity/OutwardFileLogId.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.entity;
+
+import java.io.Serializable;
+import java.util.Objects;
+
+public class OutwardFileLogId implements Serializable {
+
+	private static final long serialVersionUID = 1L;
+
+	private String xmlFileName;
+	private String folderName;
+
+	public OutwardFileLogId() {
+	}
+
+	public OutwardFileLogId(String xmlFileName, String folderName) {
+		this.xmlFileName = xmlFileName;
+		this.folderName = folderName;
+	}
+
+	public String getXmlFileName() {
+		return xmlFileName;
+	}
+
+	public void setXmlFileName(String xmlFileName) {
+		this.xmlFileName = xmlFileName;
+	}
+
+	public String getFolderName() {
+		return folderName;
+	}
+
+	public void setFolderName(String folderName) {
+		this.folderName = folderName;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(folderName, xmlFileName);
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null || getClass() != obj.getClass())
+			return false;
+		OutwardFileLogId other = (OutwardFileLogId) obj;
+		return Objects.equals(folderName, other.folderName) && Objects.equals(xmlFileName, other.xmlFileName);
+	}
+}
+
+--------------------------------------------------------------------------------
+File: repository/OutwardDecLogRepository.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import com.tcs.aadesh.entity.OutwardDecLog;
+
+@Repository
+public interface OutwardDecLogRepository extends JpaRepository<OutwardDecLog, String> {
+
+	boolean existsByFileNameAndErrorCodeIsNull(String fileName);
+
+}
+
+--------------------------------------------------------------------------------
+File: repository/OutwardFileLogRepository.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import com.tcs.aadesh.entity.OutwardFileLog;
+import com.tcs.aadesh.entity.OutwardFileLogId;
+
+@Repository
+public interface OutwardFileLogRepository extends JpaRepository<OutwardFileLog, OutwardFileLogId> {
+
+}
+
+================================================================================
+5. CUSTOM EXCEPTIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+File: exception/CryptoProcessingException.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.exception;
+
+public class CryptoProcessingException extends RuntimeException {
+
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public CryptoProcessingException(String errorCode, String errorMessage) {
+		super(errorMessage);
+		this.errorCode = errorCode;
+		this.errorMessage = errorMessage;
+	}
+
+	public CryptoProcessingException(String errorCode, String errorMessage, Throwable cause) {
+		super(errorMessage, cause);
+		this.errorCode = errorCode;
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}
+
+--------------------------------------------------------------------------------
+File: exception/SftpTransferException.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.exception;
+
+public class SftpTransferException extends RuntimeException {
+
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public SftpTransferException(String errorMessage) {
+		super(errorMessage);
+		this.errorMessage = errorMessage;
+	}
+
+	public SftpTransferException(String errorMessage, Throwable cause) {
+		super(errorMessage, cause);
+		this.errorMessage = errorMessage;
+	}
+
+	public SftpTransferException(String errorCode, String errorMessage, Throwable cause) {
+		super(errorMessage, cause);
+		this.errorCode = errorCode;
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}
+
+--------------------------------------------------------------------------------
+File: exception/UnrecognizedFileTypeException.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.exception;
+
+import com.tcs.aadesh.constant.ProcessingStatus;
+
+public class UnrecognizedFileTypeException extends RuntimeException {
+
+	private static final long serialVersionUID = 1L;
+
+	private String errorCode;
+	private String errorMessage;
+
+	public UnrecognizedFileTypeException(String errorMessage) {
+		super(errorMessage);
+		this.errorCode = ProcessingStatus.ERR04.getCode();
+		this.errorMessage = errorMessage;
+	}
+
+	public UnrecognizedFileTypeException(String errorCode, String errorMessage) {
+		super(errorMessage);
+		this.errorCode = errorCode;
+		this.errorMessage = errorMessage;
+	}
+
+	public String getErrorCode() {
+		return errorCode;
+	}
+
+	public void setErrorCode(String errorCode) {
+		this.errorCode = errorCode;
+	}
+
+	public String getErrorMessage() {
+		return errorMessage;
+	}
+
+	public void setErrorMessage(String errorMessage) {
+		this.errorMessage = errorMessage;
+	}
+}
+
+================================================================================
+6. SCHEDULER & CORE SERVICES
+================================================================================
+
+--------------------------------------------------------------------------------
+File: scheduler/FilePollingScheduler.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.scheduler;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.concurrent.ExecutorService;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.config.properties.FilePathProperties;
+import com.tcs.aadesh.service.DecryptionOrchestratorService;
+import com.tcs.aadesh.service.SftpService;
+import com.tcs.aadesh.util.ErrorLogger;
+
+@Component
+public class FilePollingScheduler {
+
+	private static final Logger log = LoggerFactory.getLogger(FilePollingScheduler.class);
+
+	private final FilePathProperties filePathProperties;
+	private final SftpService sftpService;
+	private final DecryptionOrchestratorService decryptionOrchestratorService;
+	private final ExecutorService decryptionExecutor;
+
+	@Autowired
+	public FilePollingScheduler(FilePathProperties filePathProperties,
+								SftpService sftpService,
+								DecryptionOrchestratorService decryptionOrchestratorService,
+								ExecutorService decryptionExecutor) {
+		this.filePathProperties = filePathProperties;
+		this.sftpService = sftpService;
+		this.decryptionOrchestratorService = decryptionOrchestratorService;
+		this.decryptionExecutor = decryptionExecutor;
+	}
+
+	@Scheduled(fixedDelayString = "${app.scheduler.poll-interval:60000}")
+	public void pollAndProcessFiles() {
+		try {
+			// 1. Fetch files from remote SFTP to local source directory
+			sftpService.fetchFilesFromRemote();
+
+			// 2. Scan local source directory
+			File sourceDir = new File(filePathProperties.getSourcePath());
+
+			if (!sourceDir.exists() || !sourceDir.isDirectory()) {
+				log.warn("Source directory does not exist or is invalid: {}", sourceDir.getAbsolutePath());
+				return;
+			}
+
+			// Filter specifically for .zip extensions to avoid processing partial/temp files
+			File[] files = sourceDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".zip"));
+
+			if (files == null || files.length == 0) {
+				log.debug("No new ZIP files found in source directory.");
+				return;
+			}
+
+			log.info("Found {} ZIP file(s) for processing.", files.length);
+
+			// 3. Dispatch files to the Orchestrator concurrently via the ExecutorService
+			Arrays.stream(files).forEach(file -> {
+				decryptionExecutor.submit(() -> {
+					try {
+						decryptionOrchestratorService.processZipBatch(file);
+					} catch (Exception e) {
+						ErrorLogger.log(log, "Failed to process file: " + file.getName(), e);
+					}
+				});
+			});
+
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Error during scheduled file polling execution", e);
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: service/DecryptionOrchestratorService.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.service;
+
+import java.io.File;
+import java.io.IOException;
+import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Base64;
+import java.util.List;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.config.properties.CryptoProperties;
+import com.tcs.aadesh.config.properties.FilePathProperties;
+import com.tcs.aadesh.constant.FileType;
+import com.tcs.aadesh.constant.ProcessingStatus;
+import com.tcs.aadesh.entity.OutwardDecLog;
+import com.tcs.aadesh.entity.OutwardFileLog;
+import com.tcs.aadesh.exception.CryptoProcessingException;
+import com.tcs.aadesh.exception.UnrecognizedFileTypeException;
+import com.tcs.aadesh.repository.OutwardDecLogRepository;
+import com.tcs.aadesh.repository.OutwardFileLogRepository;
+import com.tcs.aadesh.util.ErrorLogger;
+import com.tcs.aadesh.util.PgpCryptoUtility;
+import com.tcs.aadesh.util.ZipUtility;
+
+@Service
+public class DecryptionOrchestratorService {
+
+	private static final Logger log = LoggerFactory.getLogger(DecryptionOrchestratorService.class);
+	private static final DateTimeFormatter BACKUP_DATE_FORMATTER = DateTimeFormatter.ofPattern("ddMMyyyy");
+
+	private final FilePathProperties filePathProperties;
+	private final CryptoProperties cryptoProperties;
+	private final FileRoutingService fileRoutingService;
+	private final SignatureVerificationService signatureVerificationService;
+	private final PgpCryptoUtility pgpCryptoUtility;
+	private final ZipUtility zipUtility;
+	private final OutwardDecLogRepository outwardDecLogRepository;
+	private final OutwardFileLogRepository outwardFileLogRepository;
+
+	@Autowired
+	public DecryptionOrchestratorService(FilePathProperties filePathProperties,
+										 CryptoProperties cryptoProperties,
+										 FileRoutingService fileRoutingService,
+										 SignatureVerificationService signatureVerificationService,
+										 PgpCryptoUtility pgpCryptoUtility,
+										 ZipUtility zipUtility,
+										 OutwardDecLogRepository outwardDecLogRepository,
+										 OutwardFileLogRepository outwardFileLogRepository) {
+		this.filePathProperties = filePathProperties;
+		this.cryptoProperties = cryptoProperties;
+		this.fileRoutingService = fileRoutingService;
+		this.signatureVerificationService = signatureVerificationService;
+		this.pgpCryptoUtility = pgpCryptoUtility;
+		this.zipUtility = zipUtility;
+		this.outwardDecLogRepository = outwardDecLogRepository;
+		this.outwardFileLogRepository = outwardFileLogRepository;
+	}
+
+	public void processZipBatch(File sourceFile) {
+		String fileName = sourceFile.getName();
+		String referenceNumber = generateReferenceNumber();
+		String zone = extractZone(fileName);
+		Path tempDecryptedFile = null;
+
+		log.info("Processing file: {} | Reference Number: {}", fileName, referenceNumber);
+
+		OutwardDecLog decLog = new OutwardDecLog();
+		decLog.setReferenceNumber(referenceNumber);
+		decLog.setEntryDate(LocalDate.now());
+		decLog.setFileName(fileName);
+		decLog.setFileCopiedTime(LocalDateTime.now());
+		decLog.setZone(zone);
+
+		try {
+			// 1. Duplicate check
+			if (outwardDecLogRepository.existsByFileNameAndErrorCodeIsNull(fileName)) {
+				log.warn("Duplicate file detected, moving to duplicate directory: {}", fileName);
+				decLog.setStatus(ProcessingStatus.FAILED_FILE.getCode());
+				decLog.setStatusDec(ProcessingStatus.FAILED_FILE.getDescription());
+				decLog.setErrorCode(ProcessingStatus.ERR03.getCode());
+				decLog.setLastUpdatedTime(LocalDateTime.now());
+				outwardDecLogRepository.save(decLog);
+
+				moveFileSafely(sourceFile.toPath(), filePathProperties.getFailed().getDuplicateFilePath());
+				return;
+			}
+
+			// 2. Route file type & resolve flat output directory (Mandate vs Pain_12)
+			FileType fileType = fileRoutingService.resolveFileType(fileName);
+			Path targetOutputDir = fileRoutingService.resolveOutputDirectory(fileType);
+			decLog.setFileType(fileType.getValue());
+
+			// 3. Decrypt, unsign, and flat-unzip based on input format
+			List<String> extractedXmlFiles;
+
+			if (pgpCryptoUtility.isPgpEncrypted(sourceFile)) {
+				decLog.setEncryptionType(ProcessingStatus.ENCRYPTED_FILE.getCode());
+				decLog.setStatus(ProcessingStatus.FILE_PICKED_FOR_DECRYPTION.getCode());
+
+				tempDecryptedFile = pgpCryptoUtility.decryptFile(sourceFile, filePathProperties.getDecryptedTempPath());
+				decLog.setStatus(ProcessingStatus.DECRYPTED_UNSIGN_PENDING.getCode());
+				decLog.setLastUpdatedTime(LocalDateTime.now());
+
+				String base64OrgContent = signatureVerificationService.extractAndVerifySignature(tempDecryptedFile.toFile());
+				decLog.setStatus(ProcessingStatus.UNSIGN_SUCCESS.getCode());
+				decLog.setStatusDec(ProcessingStatus.UNSIGN_SUCCESS.getDescription());
+				decLog.setLastUpdatedTime(LocalDateTime.now());
+
+				byte[] zipBytes = Base64.getDecoder().decode(base64OrgContent);
+				extractedXmlFiles = zipUtility.unzipFromBytesFlat(zipBytes, targetOutputDir);
+
+			} else if (cryptoProperties.getPgp().isAllowUnencrypted()) {
+				if (signatureVerificationService.isSignedFile(sourceFile)) {
+					decLog.setEncryptionType(ProcessingStatus.SIGNED_FILE.getCode());
+					String base64OrgContent = signatureVerificationService.extractAndVerifySignature(sourceFile);
+					decLog.setStatus(ProcessingStatus.UNSIGN_SUCCESS.getCode());
+					decLog.setStatusDec(ProcessingStatus.UNSIGN_SUCCESS.getDescription());
+					decLog.setLastUpdatedTime(LocalDateTime.now());
+
+					byte[] zipBytes = Base64.getDecoder().decode(base64OrgContent);
+					extractedXmlFiles = zipUtility.unzipFromBytesFlat(zipBytes, targetOutputDir);
+
+				} else if (zipUtility.isZipFile(sourceFile)) {
+					decLog.setEncryptionType(ProcessingStatus.ZIPPED_FILE.getCode());
+					extractedXmlFiles = zipUtility.unzipFileFlat(sourceFile, targetOutputDir);
+
+				} else {
+					throw new CryptoProcessingException(
+							ProcessingStatus.DECRYPTION_FAILURE.getCode(),
+							"File is neither PGP encrypted, signed XML, nor a valid ZIP: " + fileName);
+				}
+			} else {
+				throw new CryptoProcessingException(
+						ProcessingStatus.DECRYPTION_FAILURE.getCode(),
+						"Unencrypted file rejected by configuration: " + fileName);
+			}
+
+			// 4. Log individual extracted XMLs to OUTWARD_FILE_LOGS
+			String zipBaseName = stripExtension(fileName);
+			saveExtractedFileLogs(extractedXmlFiles, zipBaseName, zone);
+
+			// 5. Log batch summary to OUTWARD_DEC_LOGS
+			decLog.setTotalRecords(extractedXmlFiles.size());
+			decLog.setStatus(ProcessingStatus.DECRYPTION_SUCCESS.getCode());
+			decLog.setStatusDec(ProcessingStatus.DECRYPTION_SUCCESS.getDescription());
+			decLog.setLastUpdatedTime(LocalDateTime.now());
+			outwardDecLogRepository.save(decLog);
+
+			// 6. Backup source ZIP and extracted XMLs, then remove source ZIP
+			backupFiles(sourceFile, extractedXmlFiles, targetOutputDir, fileType);
+			Files.deleteIfExists(sourceFile.toPath());
+
+			log.info("Successfully processed {} | Extracted {} XML(s) to {} | Ref: {}",
+					fileName, extractedXmlFiles.size(), targetOutputDir, referenceNumber);
+
+		} catch (UnrecognizedFileTypeException e) {
+			ErrorLogger.log(log, "Unrecognized file type for: " + fileName, e);
+			handleFailure(sourceFile, decLog, ProcessingStatus.FAILED_FILE, e.getErrorCode(),
+					filePathProperties.getFailed().getUnrecognizedTypePath());
+
+		} catch (CryptoProcessingException e) {
+			ErrorLogger.log(log, "Crypto/extraction failure for: " + fileName, e);
+			ProcessingStatus failedStatus = resolveStatusFromCode(e.getErrorCode());
+			String failedDir = resolveFailedDirectory(e.getErrorCode());
+			handleFailure(sourceFile, decLog, failedStatus, e.getErrorCode(), failedDir);
+
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Unexpected error while processing: " + fileName, e);
+			handleFailure(sourceFile, decLog, ProcessingStatus.DECRYPTION_FAILURE,
+					ProcessingStatus.DECRYPTION_FAILURE.getCode(),
+					filePathProperties.getFailed().getDecryptionFailedPath());
+
+		} finally {
+			if (tempDecryptedFile != null) {
+				try {
+					Files.deleteIfExists(tempDecryptedFile);
+				} catch (IOException ex) {
+					ErrorLogger.log(log, "Failed to delete temp decrypted file: " + tempDecryptedFile, ex);
+				}
+			}
+		}
+	}
+
+	private void saveExtractedFileLogs(List<String> extractedXmlFiles, String zipBaseName, String zone) {
+		LocalDate today = LocalDate.now();
+		LocalDateTime now = LocalDateTime.now();
+
+		List<OutwardFileLog> fileLogs = extractedXmlFiles.stream().map(xmlName -> {
+			OutwardFileLog fileLog = new OutwardFileLog();
+			fileLog.setXmlFileName(xmlName);
+			fileLog.setFolderName(zipBaseName);
+			fileLog.setZone(zone);
+			fileLog.setEntryDate(today);
+			fileLog.setLastUpdatedTime(now);
+			fileLog.setOperationFlag("DEC");
+			return fileLog;
+		}).toList();
+
+		outwardFileLogRepository.saveAll(fileLogs);
+	}
+
+	private void backupFiles(File sourceFile, List<String> extractedXmlFiles, Path targetOutputDir, FileType fileType)
+			throws IOException {
+		String dateFolder = LocalDate.now().format(BACKUP_DATE_FORMATTER);
+
+		// Backup original ZIP
+		Path zipBackupDir = Paths.get(filePathProperties.getBackupPath(), fileType.getValue(), dateFolder);
+		Files.createDirectories(zipBackupDir);
+		Files.copy(sourceFile.toPath(), zipBackupDir.resolve(sourceFile.getName()), StandardCopyOption.REPLACE_EXISTING);
+
+		// Backup extracted XMLs
+		Path xmlBackupDir = Paths.get(filePathProperties.getOutputBackupPath(), fileType.getValue(), dateFolder);
+		Files.createDirectories(xmlBackupDir);
+		for (String xmlFileName : extractedXmlFiles) {
+			Path extractedFile = targetOutputDir.resolve(xmlFileName);
+			if (Files.exists(extractedFile)) {
+				Files.copy(extractedFile, xmlBackupDir.resolve(xmlFileName), StandardCopyOption.REPLACE_EXISTING);
+			}
+		}
+	}
+
+	private void handleFailure(File sourceFile, OutwardDecLog decLog, ProcessingStatus status, String errorCode,
+			String failedDir) {
+		decLog.setStatus(status.getCode());
+		decLog.setStatusDec(status.getDescription());
+		decLog.setErrorCode(errorCode);
+		decLog.setLastUpdatedTime(LocalDateTime.now());
+		outwardDecLogRepository.save(decLog);
+
+		moveFileSafely(sourceFile.toPath(), failedDir);
+	}
+
+	private void moveFileSafely(Path source, String targetDir) {
+		try {
+			Path destinationDir = Paths.get(targetDir);
+			Files.createDirectories(destinationDir);
+			Files.move(source, destinationDir.resolve(source.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+		} catch (IOException ex) {
+			ErrorLogger.log(log, "Failed to move file " + source.getFileName() + " to " + targetDir, ex);
+		}
+	}
+
+	private ProcessingStatus resolveStatusFromCode(String code) {
+		for (ProcessingStatus status : ProcessingStatus.values()) {
+			if (status.getCode().equals(code)) {
+				return status;
+			}
+		}
+		return ProcessingStatus.DECRYPTION_FAILURE;
+	}
+
+	private String resolveFailedDirectory(String errorCode) {
+		if (ProcessingStatus.UNSIGN_FAILURE.getCode().equals(errorCode)) {
+			return filePathProperties.getFailed().getSignNotVerifiedPath();
+		}
+		if (ProcessingStatus.UNZIP_FAILURE.getCode().equals(errorCode)) {
+			return filePathProperties.getFailed().getDecryptionFailedPath();
+		}
+		return filePathProperties.getFailed().getDecryptionFailedPath();
+	}
+
+	private String generateReferenceNumber() {
+		String uuidDigits = String.format("%010d", new BigInteger(UUID.randomUUID().toString().replace("-", ""), 16));
+		return "SBIN" + uuidDigits.substring(uuidDigits.length() - 10);
+	}
+
+	private String extractZone(String fileName) {
+		if (fileName.contains("OTH")) {
+			return "OTH";
+		} else if (fileName.contains("SOU")) {
+			return "SOU";
+		} else if (fileName.contains("NOR")) {
+			return "NOR";
+		}
+		return null;
+	}
+
+	private String stripExtension(String fileName) {
+		int dotIndex = fileName.lastIndexOf('.');
+		return dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
+	}
+}
+
+--------------------------------------------------------------------------------
+File: service/FileRoutingService.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.service;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.tcs.aadesh.config.properties.FilePathProperties;
+import com.tcs.aadesh.constant.FileType;
+import com.tcs.aadesh.exception.UnrecognizedFileTypeException;
+
+@Service
+public class FileRoutingService {
+
+	private static final Logger log = LoggerFactory.getLogger(FileRoutingService.class);
+
+	private final FilePathProperties filePathProperties;
+
+	@Autowired
+	public FileRoutingService(FilePathProperties filePathProperties) {
+		this.filePathProperties = filePathProperties;
+	}
+
+	public FileType resolveFileType(String fileName) {
+		if (fileName == null || fileName.isBlank()) {
+			throw new UnrecognizedFileTypeException("Filename is null or empty");
+		}
+
+		String upperName = fileName.toUpperCase();
+
+		if (upperName.contains("PAIN12")) {
+			return FileType.PAIN12_RES;
+		} else if (upperName.contains("CREATE")) {
+			return FileType.CREATE;
+		} else if (upperName.contains("AMEND")) {
+			return FileType.AMEND;
+		} else if (upperName.contains("CANCEL")) {
+			return FileType.CANCEL;
+		}
+
+		log.warn("Could not determine file type for: {}", fileName);
+		throw new UnrecognizedFileTypeException("Unrecognized file type for file: " + fileName);
+	}
+
+	public Path resolveOutputDirectory(FileType fileType) {
+		if (fileType == null) {
+			throw new UnrecognizedFileTypeException("FileType cannot be null");
+		}
+
+		Path targetDir = switch (fileType) {
+			case CREATE, AMEND, CANCEL -> Paths.get(filePathProperties.getOutput().getMandatePath());
+			case PAIN12_RES -> Paths.get(filePathProperties.getOutput().getPain12Path());
+		};
+
+		log.debug("Routed fileType {} to output directory: {}", fileType, targetDir);
+		return targetDir;
+	}
+}
+
+--------------------------------------------------------------------------------
+File: service/SignatureVerificationService.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.service;
+
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.Base64;
+import java.util.Collection;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.SignerInformation;
+import org.bouncycastle.cms.SignerInformationStore;
+import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+
+import com.tcs.aadesh.config.properties.CryptoProperties;
+import com.tcs.aadesh.constant.ProcessingStatus;
+import com.tcs.aadesh.exception.CryptoProcessingException;
+import com.tcs.aadesh.util.ErrorLogger;
+
+@Service
+public class SignatureVerificationService {
+
+	private static final Logger log = LoggerFactory.getLogger(SignatureVerificationService.class);
+
+	private final CryptoProperties cryptoProperties;
+
+	@Autowired
+	public SignatureVerificationService(CryptoProperties cryptoProperties) {
+		this.cryptoProperties = cryptoProperties;
+	}
+
+	public boolean isSignedFile(File file) {
+		boolean has1 = false, has2 = false, has3 = false, has4 = false;
+		try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				if (line.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"") && line.contains("<Envelope><OrgContent>")) {
+					has1 = true;
+				}
+				if (line.contains("</OrgContent><Signature>")) {
+					has2 = true;
+				}
+				if (line.contains("</Signature><Certificate>")) {
+					has3 = true;
+				}
+				if (line.contains("</Certificate></Envelope>")) {
+					has4 = true;
+				}
+				if (has1 && has2 && has3 && has4) {
+					return true;
+				}
+			}
+		} catch (IOException e) {
+			ErrorLogger.log(log, "Failed to read file for signature markers: " + file.getName(), e);
+		}
+		return false;
+	}
+
+	public String extractAndVerifySignature(File xmlFile) {
+		try {
+			// 1. Parse XML and extract Base64 content
+			DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+			factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+			DocumentBuilder builder = factory.newDocumentBuilder();
+			Document doc = builder.parse(xmlFile);
+			doc.getDocumentElement().normalize();
+
+			Node orgContentNode = doc.getElementsByTagName("OrgContent").item(0);
+			Node signatureNode = doc.getElementsByTagName("Signature").item(0);
+			Node certificateNode = doc.getElementsByTagName("Certificate").item(0);
+
+			if (orgContentNode == null || signatureNode == null || certificateNode == null) {
+				throw new CryptoProcessingException(ProcessingStatus.UNSIGN_FAILURE.getCode(),
+						"Missing required XML tags (OrgContent, Signature, Certificate) in file: " + xmlFile.getName());
+			}
+
+			String orgContentBase64 = orgContentNode.getTextContent();
+			String signatureBase64 = signatureNode.getTextContent();
+			String certificateBase64 = certificateNode.getTextContent();
+
+			// 2. Decode and save the certificate for audit
+			byte[] certBytes = Base64.getDecoder().decode(certificateBase64);
+			Path certOutputPath = Paths.get(cryptoProperties.getPgp().getCheckingCertPath());
+			Files.write(certOutputPath, certBytes);
+
+			// 3. Generate X509Certificate object
+			X509Certificate x509Cert;
+			try (InputStream certStream = new ByteArrayInputStream(certBytes)) {
+				CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+				x509Cert = (X509Certificate) certFactory.generateCertificate(certStream);
+			}
+
+			// 4. Verify CMS Signature
+			byte[] originalContentBytes = Base64.getDecoder().decode(orgContentBase64);
+			byte[] signatureBytes = Base64.getDecoder().decode(signatureBase64);
+
+			CMSProcessableByteArray cmsContent = new CMSProcessableByteArray(originalContentBytes);
+			CMSSignedData signedData = new CMSSignedData(cmsContent, signatureBytes);
+			SignerInformationStore signers = signedData.getSignerInfos();
+			Collection<SignerInformation> signerInfos = signers.getSigners();
+
+			boolean isSignValid = false;
+			for (SignerInformation signer : signerInfos) {
+				if (signer.verify(new JcaSimpleSignerInfoVerifierBuilder().build(x509Cert))) {
+					isSignValid = true;
+					break;
+				}
+			}
+
+			if (!isSignValid) {
+				throw new CryptoProcessingException(ProcessingStatus.UNSIGN_FAILURE.getCode(),
+						"CMS Signature verification failed against the embedded certificate for file: " + xmlFile.getName());
+			}
+
+			return orgContentBase64;
+
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Signature extraction/verification error for file: " + xmlFile.getName(), e);
+			throw new CryptoProcessingException(ProcessingStatus.UNSIGN_FAILURE.getCode(),
+					"Error during signature verification: " + e.getMessage(), e);
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: service/SftpService.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.service;
+
+import java.io.File;
+import java.util.Vector;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.ChannelSftp.LsEntry;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
+import com.jcraft.jsch.SftpATTRS;
+import com.tcs.aadesh.config.properties.SftpProperties;
+import com.tcs.aadesh.exception.SftpTransferException;
+import com.tcs.aadesh.util.AesCredentialUtility;
+import com.tcs.aadesh.util.ErrorLogger;
+
+@Service
+public class SftpService {
+
+	private static final Logger log = LoggerFactory.getLogger(SftpService.class);
+
+	private final SftpProperties sftpProperties;
+	private final AesCredentialUtility aesCredentialUtility;
+
+	@Autowired
+	public SftpService(SftpProperties sftpProperties, AesCredentialUtility aesCredentialUtility) {
+		this.sftpProperties = sftpProperties;
+		this.aesCredentialUtility = aesCredentialUtility;
+	}
+
+	public void fetchFilesFromRemote() {
+		if (!sftpProperties.isEnabled()) {
+			log.debug("SFTP transfer is disabled in properties.");
+			return;
+		}
+
+		Session session = null;
+		ChannelSftp channel = null;
+
+		try {
+			String username = aesCredentialUtility.decrypt(sftpProperties.getUsername());
+			String privateKeyPath = aesCredentialUtility.decrypt(sftpProperties.getPrivateKeyPath());
+
+			JSch jsch = new JSch();
+			jsch.addIdentity(privateKeyPath.trim());
+
+			session = jsch.getSession(username, sftpProperties.getHost(), sftpProperties.getPort());
+
+			java.util.Properties config = new java.util.Properties();
+			config.put("StrictHostKeyChecking", "no");
+			config.put("PreferredAuthentications", "publickey");
+			session.setConfig(config);
+
+			log.info("Connecting to SFTP server {} on port {}...", sftpProperties.getHost(), sftpProperties.getPort());
+			session.connect();
+
+			channel = (ChannelSftp) session.openChannel("sftp");
+			channel.connect();
+
+			log.info("SFTP connection established successfully.");
+
+			int filesDownloaded = downloadAndArchiveFiles(channel);
+			log.info("SFTP fetch complete. Total files downloaded: {}", filesDownloaded);
+
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Failed to fetch files from remote SFTP server", e);
+			throw new SftpTransferException("Error during SFTP operations: " + e.getMessage(), e);
+		} finally {
+			disconnect(channel, session);
+		}
+	}
+
+	private int downloadAndArchiveFiles(ChannelSftp channel) throws Exception {
+		String remoteDir = sftpProperties.getRemoteDir();
+		String localDir = sftpProperties.getLocalDir();
+
+		channel.cd(remoteDir);
+
+		@SuppressWarnings("unchecked")
+		Vector<LsEntry> fileList = channel.ls("*.zip");
+
+		int count = 0;
+
+		if (fileList != null && !fileList.isEmpty()) {
+			for (LsEntry entry : fileList) {
+				if (!entry.getAttrs().isDir()) {
+					String filename = entry.getFilename();
+					String remoteFilePath = remoteDir + (remoteDir.endsWith("/") ? "" : "/") + filename;
+					String localFilePath = localDir + File.separator + filename;
+
+					log.info("Downloading file: {} to {}", remoteFilePath, localFilePath);
+
+					channel.get(remoteFilePath, localFilePath);
+					moveRemoteFileToArchive(channel, remoteFilePath, filename);
+					count++;
+				}
+			}
+		} else {
+			log.debug("No .zip files found in remote directory: {}", remoteDir);
+		}
+
+		return count;
+	}
+
+	private void moveRemoteFileToArchive(ChannelSftp channel, String sourcePath, String filename) {
+		try {
+			String archiveDir = sftpProperties.getArchiveDir();
+			String archivePath = archiveDir + (archiveDir.endsWith("/") ? "" : "/") + filename;
+
+			SftpATTRS attrs = channel.stat(sourcePath);
+			if (attrs != null) {
+				channel.rename(sourcePath, archivePath);
+				log.info("Moved remote file {} to archive {}", sourcePath, archivePath);
+			} else {
+				log.error("Source file does not exist on remote for archiving: {}", sourcePath);
+			}
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Failed to archive remote file: " + sourcePath, e);
+		}
+	}
+
+	private void disconnect(ChannelSftp channel, Session session) {
+		if (channel != null && channel.isConnected()) {
+			channel.disconnect();
+		}
+		if (session != null && session.isConnected()) {
+			session.disconnect();
+		}
+	}
+}
+
+================================================================================
+7. UTILITY CLASSES
+================================================================================
+
+--------------------------------------------------------------------------------
+File: util/AesCredentialUtility.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.util;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.config.properties.CryptoProperties;
+import com.tcs.aadesh.exception.CryptoProcessingException;
+
+@Component
+public class AesCredentialUtility {
+
+	private static final Logger log = LoggerFactory.getLogger(AesCredentialUtility.class);
+	private static final String AES_TRANSFORMATION = "AES/GCM/NoPadding";
+
+	private final CryptoProperties cryptoProperties;
+
+	@Autowired
+	public AesCredentialUtility(CryptoProperties cryptoProperties) {
+		this.cryptoProperties = cryptoProperties;
+	}
+
+	public String decrypt(String encrypted) {
+		if (encrypted == null || encrypted.isBlank()) {
+			return encrypted;
+		}
+
+		try {
+			byte[] keyBytes = Base64.getDecoder().decode(cryptoProperties.getAes().getKey().getBytes(StandardCharsets.UTF_8));
+			byte[] ivBytes = Base64.getDecoder().decode(cryptoProperties.getAes().getIv().getBytes(StandardCharsets.UTF_8));
+
+			SecretKeySpec secretKeySpec = new SecretKeySpec(keyBytes, "AES");
+			GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(128, ivBytes);
+
+			Cipher cipher = Cipher.getInstance(AES_TRANSFORMATION);
+			cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, gcmParameterSpec);
+
+			byte[] decodedEncryptedBytes = Base64.getDecoder().decode(encrypted);
+			byte[] originalBytes = cipher.doFinal(decodedEncryptedBytes);
+
+			return new String(originalBytes, StandardCharsets.UTF_8).replace("\0", "");
+
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Failed to decrypt AES credential", e);
+			throw new CryptoProcessingException("AES_DECRYPTION_ERROR", "Failed to decrypt credential property", e);
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: util/ErrorLogger.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.util;
+
+import org.slf4j.Logger;
+import org.springframework.stereotype.Component;
+
+@Component
+public final class ErrorLogger {
+
+	static String currentPackage = ErrorLogger.class.getPackage().getName();
+	static int lastDotIndex = currentPackage.lastIndexOf('.');
+	private static final String APP_BASE_PACKAGE = currentPackage.substring(0, lastDotIndex);
+
+	private ErrorLogger() {
+	}
+
+	public static void log(Logger log, Exception e) {
+		if (e == null) {
+			log.error("Unknown error (exception was null)");
+			return;
+		}
+
+		StackTraceElement origin = findApplicationTrace(e);
+
+		log.error("{} in {}.{}({}:{}) | {}",
+				e.getClass().getSimpleName(),
+				origin.getClassName(),
+				origin.getMethodName(),
+				origin.getFileName(),
+				origin.getLineNumber(),
+				safeMessage(e));
+	}
+
+	public static void log(Logger log, String message, Exception e) {
+		if (e == null) {
+			log.error("{} | Unknown error (exception was null)", message);
+			return;
+		}
+
+		StackTraceElement origin = findApplicationTrace(e);
+
+		log.error("{} | {} in {}.{}({}:{}) | {}",
+				message,
+				e.getClass().getSimpleName(),
+				origin.getClassName(),
+				origin.getMethodName(),
+				origin.getFileName(),
+				origin.getLineNumber(),
+				safeMessage(e));
+	}
+
+	private static StackTraceElement findApplicationTrace(Exception e) {
+		for (StackTraceElement element : e.getStackTrace()) {
+			if (element.getClassName().startsWith(APP_BASE_PACKAGE)) {
+				return element;
+			}
+		}
+		return e.getStackTrace().length > 0 ? e.getStackTrace()[0]
+				: new StackTraceElement("UnknownClass", "UnknownMethod", "UnknownFile", -1);
+	}
+
+	private static String safeMessage(Exception e) {
+		return (e.getMessage() == null || e.getMessage().isBlank()) ? "(no message)" : e.getMessage();
+	}
+}
+
+--------------------------------------------------------------------------------
+File: util/PgpCryptoUtility.java
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.util;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Security;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.util.Iterator;
+
+import org.apache.commons.io.FileUtils;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openpgp.PGPCompressedData;
+import org.bouncycastle.openpgp.PGPEncryptedData;
+import org.bouncycastle.openpgp.PGPEncryptedDataList;
+import org.bouncycastle.openpgp.PGPException;
+import org.bouncycastle.openpgp.PGPLiteralData;
+import org.bouncycastle.openpgp.PGPObjectFactory;
+import org.bouncycastle.openpgp.PGPOnePassSignatureList;
+import org.bouncycastle.openpgp.PGPPrivateKey;
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.bouncycastle.openpgp.PGPPublicKeyEncryptedData;
+import org.bouncycastle.openpgp.PGPUtil;
+import org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory;
+import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator;
+import org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter;
+import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyDataDecryptorFactoryBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.config.properties.CryptoProperties;
+import com.tcs.aadesh.constant.ProcessingStatus;
+import com.tcs.aadesh.exception.CryptoProcessingException;
+
+import jakarta.annotation.PostConstruct;
+
+@Component
+public class PgpCryptoUtility {
+
+	private static final Logger log = LoggerFactory.getLogger(PgpCryptoUtility.class);
+
+	private final CryptoProperties cryptoProperties;
+	private PGPPrivateKey pgpPrivateKey;
+
+	@Autowired
+	public PgpCryptoUtility(CryptoProperties cryptoProperties) {
+		this.cryptoProperties = cryptoProperties;
+	}
+
+	@PostConstruct
+	public void init() {
+		try {
+			Security.addProvider(new BouncyCastleProvider());
+
+			// 1. Load Public Key (Certificate)
+			CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+			PublicKey pubKey;
+			try (FileInputStream fis = new FileInputStream(cryptoProperties.getPgp().getPublicKeyPath())) {
+				Certificate certificate = certFactory.generateCertificate(fis);
+				pubKey = certificate.getPublicKey();
+			}
+
+			PGPPublicKey pgpPubKey = new JcaPGPKeyConverter()
+					.getPGPPublicKey(PGPPublicKey.RSA_GENERAL, pubKey, new java.util.Date());
+
+			// 2. Load Private Key (PKCS12)
+			KeyStore keyStore = KeyStore.getInstance("PKCS12");
+			char[] password = cryptoProperties.getPgp().getPassword().toCharArray();
+			try (FileInputStream fis = new FileInputStream(cryptoProperties.getPgp().getPrivateKeyPath())) {
+				keyStore.load(fis, password);
+			}
+
+			String alias = keyStore.aliases().nextElement();
+			PrivateKey privKey = (PrivateKey) keyStore.getKey(alias, password);
+
+			// 3. Generate PGPPrivateKey
+			this.pgpPrivateKey = new JcaPGPKeyConverter().getPGPPrivateKey(pgpPubKey, privKey);
+
+			log.info("PGP Keys loaded and BouncyCastle initialized successfully.");
+
+		} catch (Exception e) {
+			ErrorLogger.log(log, "Failed to initialize PGP Keys", e);
+			throw new IllegalStateException("Could not initialize PGP Cryptography components", e);
+		}
+	}
+
+	public boolean isPgpEncrypted(File file) {
+		boolean hasBeginMarker = false;
+		boolean hasEndMarker = false;
+
+		try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				if (line.contains("-----BEGIN PGP MESSAGE-----")) {
+					hasBeginMarker = true;
+				}
+				if (line.contains("-----END PGP MESSAGE-----")) {
+					hasEndMarker = true;
+				}
+				if (hasBeginMarker && hasEndMarker) {
+					return true;
+				}
+			}
+		} catch (IOException e) {
+			ErrorLogger.log(log, "Failed to read file while checking for PGP markers: " + file.getName(), e);
+		}
+		return false;
+	}
+
+	public Path decryptFile(File encryptedFile, String targetDecryptedDir) {
+		Path targetPath = Paths.get(targetDecryptedDir, encryptedFile.getName().replaceAll("\\.zip$", ".txt"));
+
+		try (InputStream in = new BufferedInputStream(new FileInputStream(encryptedFile))) {
+
+			InputStream decoderStream = PGPUtil.getDecoderStream(in);
+			PGPObjectFactory pgpFactory = new PGPObjectFactory(decoderStream, new JcaKeyFingerprintCalculator());
+
+			Object object = pgpFactory.nextObject();
+			PGPEncryptedDataList encryptedDataList = (object instanceof PGPEncryptedDataList)
+					? (PGPEncryptedDataList) object
+					: (PGPEncryptedDataList) pgpFactory.nextObject();
+
+			if (encryptedDataList == null) {
+				throw new PGPException("Could not find PGPEncryptedDataList in the file.");
+			}
+
+			Iterator<PGPEncryptedData> it = encryptedDataList.getEncryptedDataObjects();
+			PGPPublicKeyEncryptedData pbe = null;
+			PGPPrivateKey sKey = null;
+
+			while (it.hasNext() && sKey == null) {
+				pbe = (PGPPublicKeyEncryptedData) it.next();
+				sKey = this.pgpPrivateKey;
+			}
+
+			if (sKey == null || pbe == null) {
+				throw new IllegalArgumentException("Secret key for message not found.");
+			}
+
+			PublicKeyDataDecryptorFactory decryptorFactory = new JcePublicKeyDataDecryptorFactoryBuilder()
+					.setProvider("BC")
+					.setContentProvider("BC")
+					.build(sKey);
+
+			InputStream clearStream = pbe.getDataStream(decryptorFactory);
+			if (clearStream == null) {
+				throw new IOException("Failed to obtain data stream from PGPPublicKeyEncryptedData.");
+			}
+
+			PGPObjectFactory plainFact = new PGPObjectFactory(clearStream, new JcaKeyFingerprintCalculator());
+			Object message = plainFact.nextObject();
+
+			if (message instanceof PGPCompressedData) {
+				PGPCompressedData cData = (PGPCompressedData) message;
+				PGPObjectFactory pgpFact = new PGPObjectFactory(cData.getDataStream(), new JcaKeyFingerprintCalculator());
+				message = pgpFact.nextObject();
+			}
+
+			if (message instanceof CMSSignedData) {
+				CMSSignedData cms = (CMSSignedData) message;
+				byte[] contentBytes = (byte[]) cms.getSignedContent().getContent();
+				FileUtils.writeByteArrayToFile(targetPath.toFile(), contentBytes);
+
+			} else if (message instanceof PGPLiteralData) {
+				PGPLiteralData ld = (PGPLiteralData) message;
+				try (InputStream uncStream = ld.getInputStream()) {
+					FileUtils.copyInputStreamToFile(uncStream, targetPath.toFile());
+				}
+
+			} else if (message instanceof PGPOnePassSignatureList) {
+				throw new PGPException("Encrypted message contains a signed message - not literal data.");
+			} else {
+				throw new PGPException("Message is not a simple encrypted file - type unknown.");
+			}
+
+			if (pbe.isIntegrityProtected() && !pbe.verify()) {
+				throw new PGPException("Message failed integrity check. Data may be corrupted or tampered with.");
+			}
+
+			return targetPath;
+
+		} catch (PGPException | IOException e) {
+			ErrorLogger.log(log, "PGP Decryption failed for file: " + encryptedFile.getName(), e);
+			throw new CryptoProcessingException(ProcessingStatus.DECRYPTION_FAILURE.getCode(),
+					"Decryption failed: " + e.getMessage(), e);
+		}
+	}
+}
+
+--------------------------------------------------------------------------------
+File: util/ZipUtility.java (Final XML-Only Version)
+--------------------------------------------------------------------------------
+package com.tcs.aadesh.util;
+
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
+
+import org.apache.commons.io.FilenameUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.constant.ProcessingStatus;
+import com.tcs.aadesh.exception.CryptoProcessingException;
+
+@Component
+public class ZipUtility {
+
+	private static final Logger log = LoggerFactory.getLogger(ZipUtility.class);
+
+	public boolean isZipFile(File file) {
+		try (ZipFile zipFile = new ZipFile(file)) {
+			return true;
+		} catch (ZipException e) {
+			log.debug("The given file is not a valid zip file: {}", file.getName());
+			return false;
+		} catch (IOException e) {
+			ErrorLogger.log(log, "I/O Error while checking if file is zip: " + file.getName(), e);
+			return false;
+		}
+	}
+
+	public List<String> unzipFromBytesFlat(byte[] zipBytes, Path targetOutputDir) {
+		List<String> extractedXmlFiles = new ArrayList<>();
+
+		try {
+			Files.createDirectories(targetOutputDir);
+		} catch (IOException e) {
+			throw new CryptoProcessingException(ProcessingStatus.UNZIP_FAILURE.getCode(),
+					"Failed to create target output directory: " + targetOutputDir, e);
+		}
+
+		try (InputStream byteArrayInputStream = new ByteArrayInputStream(zipBytes);
+			 ZipInputStream zis = new ZipInputStream(byteArrayInputStream)) {
+
+			ZipEntry zipEntry;
+			while ((zipEntry = zis.getNextEntry()) != null) {
+				if (!zipEntry.isDirectory()) {
+					String extractedName = extractAndWriteEntry(zis, zipEntry.getName(), targetOutputDir);
+					extractedXmlFiles.add(extractedName);
+				}
+				zis.closeEntry();
+			}
+
+		} catch (IOException e) {
+			ErrorLogger.log(log, "Failed to unzip from byte array.", e);
+			throw new CryptoProcessingException(ProcessingStatus.UNZIP_FAILURE.getCode(),
+					"Failed to extract ZIP contents from memory.", e);
+		}
+
+		return extractedXmlFiles;
+	}
+
+	public List<String> unzipFileFlat(File zipFile, Path targetOutputDir) {
+		List<String> extractedXmlFiles = new ArrayList<>();
+
+		try {
+			Files.createDirectories(targetOutputDir);
+		} catch (IOException e) {
+			throw new CryptoProcessingException(ProcessingStatus.UNZIP_FAILURE.getCode(),
+					"Failed to create target output directory: " + targetOutputDir, e);
+		}
+
+		try (ZipFile zf = new ZipFile(zipFile)) {
+			Enumeration<? extends ZipEntry> entries = zf.entries();
+
+			while (entries.hasMoreElements()) {
+				ZipEntry entry = entries.nextElement();
+				if (!entry.isDirectory()) {
+					try (InputStream is = zf.getInputStream(entry)) {
+						String extractedName = extractAndWriteEntry(is, entry.getName(), targetOutputDir);
+						extractedXmlFiles.add(extractedName);
+					}
+				}
+			}
+
+		} catch (IOException e) {
+			ErrorLogger.log(log, "Failed to unzip physical file: " + zipFile.getName(), e);
+			throw new CryptoProcessingException(ProcessingStatus.UNZIP_FAILURE.getCode(),
+					"Failed to extract physical ZIP file: " + zipFile.getName(), e);
+		}
+
+		return extractedXmlFiles;
+	}
+
+	private String extractAndWriteEntry(InputStream inputStream, String entryName, Path targetOutputDir)
+			throws IOException {
+		// Flatten the path: extract only the filename, ignoring any folders inside the zip
+		String fileName = Paths.get(entryName).getFileName().toString();
+		Path targetFilePath = targetOutputDir.resolve(fileName);
+
+		// Collision Handling: append a short UUID if a file with the same name already exists
+		if (Files.exists(targetFilePath)) {
+			String baseName = FilenameUtils.getBaseName(fileName);
+			String extension = FilenameUtils.getExtension(fileName);
+			String uniqueSuffix = UUID.randomUUID().toString().substring(0, 6);
+			fileName = extension.isEmpty()
+					? baseName + "_" + uniqueSuffix
+					: baseName + "_" + uniqueSuffix + "." + extension;
+			targetFilePath = targetOutputDir.resolve(fileName);
+			log.info("Filename collision detected. Renamed extracted file to: {}", fileName);
+		}
+
+		Files.copy(inputStream, targetFilePath, StandardCopyOption.REPLACE_EXISTING);
+		return fileName;
+	}
+}
