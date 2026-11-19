@@ -1,0 +1,60 @@
+The current validation is failing because of a key collision in your regex.
+In your folder, every file shares the same bank and user ID (HDFC-HDFCH2H1) and only differs by the trailing sequence number (e.g., 057408, 057480, 057485). Because the previous regex only captured HDFCH2H1 as Group 1 (commonId), every new file overwrote the previous one in your groupedFiles map instead of creating separate sets for each XML and its two images.
+1. Update the Regex in application.yml
+Modify filename.pattern so Group 1 captures the entire unique base name (including the date and sequence number) and Group 2 still captures the 8-digit date for date validation:
+filename:
+  pattern: "^(MMS-(?:CREATE|CANCEL|AMEND)-[A-Z0-9]+-[A-Z0-9]+-(\\d{8})-[0-9]+)(?:-INP\\.xml|_front\\.tiff?|_detailfront\\.jpe?g)$"
+
+How this parses your sample files:
+ * MMS-CREATE-HDFC-HDFCH2H1-03092024-057408-INP.xml
+ * MMS-CREATE-HDFC-HDFCH2H1-03092024-057408_front.tif
+ * MMS-CREATE-HDFC-HDFCH2H1-03092024-057408_detailfront.jpg
+   * Group 1 (commonId): MMS-CREATE-HDFC-HDFCH2H1-03092024-057408 — now 100% unique per transaction.
+   * Group 2 (fileDateStr): 03092024 — unchanged for your 5-day date validation.
+   * Suffixes: _front.tiff? matches both .tif and .tiff; _detailfront.jpe?g matches both .jpg and .jpeg.
+2. Enforce Strict XML-to-Image Pairing in FileBatchingService.java
+With Group 1 fixed, your groupedFiles map will now isolate each XML with its exact two matching images in a single pass. Ensure your processDirectory method checks isValidSet(folderName) before adding to completeSets so orphan XMLs or partial image sets are never batched:
+// Inside FileBatchingService.processDirectory(Path subFolder)
+
+String folderName = subFolder.getFileName().toString();
+Map<String, FileSet> groupedFiles = new HashMap<>();
+
+for (Path file : allFiles) {
+    String fileName = file.getFileName().toString();
+
+    if (outwardFileLogRepository.existsByFileNameAndErrorCodeIsNull(fileName)) {
+        continue;
+    }
+
+    Matcher matcher = filePattern.matcher(fileName);
+    if (!matcher.find()) {
+        log.warn("Filename does not match expected pattern, skipping: {}", fileName);
+        continue;
+    }
+
+    String uniqueBaseName = matcher.group(1); // e.g., MMS-CREATE-HDFC-HDFCH2H1-03092024-057408
+    String fileDateStr = matcher.group(2);    // e.g., 03092024
+
+    if (!isDateWithinAllowedRange(fileDateStr)) {
+        log.warn("File date {} out of range, skipping: {}", fileDateStr, fileName);
+        continue;
+    }
+
+    FileSet set = groupedFiles.computeIfAbsent(uniqueBaseName, FileSet::new);
+
+    String lowerName = fileName.toLowerCase();
+    if (lowerName.endsWith("-inp.xml")) {
+        set.setXmlFile(file);
+    } else if (lowerName.endsWith("_front.tif") || lowerName.endsWith("_front.tiff")) {
+        set.setTifFile(file);
+    } else if (lowerName.endsWith("_detailfront.jpg") || lowerName.endsWith("_detailfront.jpeg")) {
+        set.setJpgFile(file);
+    }
+}
+
+// Only collect pairs where the XML has both corresponding images (or XML-only for CANCEL)
+List<FileSet> completeSets = groupedFiles.values().stream()
+        .filter(set -> set.isValidSet(folderName))
+        .toList();
+
+No changes are needed in FileSet.isValidSet(folderName)—once uniqueBaseName includes the sequence number, every XML in CREATE and AMEND will strictly require its exact _front.tif/.tiff and _detailfront.jpg/.jpeg counterparts in the same folder to be considered valid.
