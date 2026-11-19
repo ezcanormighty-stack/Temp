@@ -58,3 +58,24 @@ List<FileSet> completeSets = groupedFiles.values().stream()
         .toList();
 
 No changes are needed in FileSet.isValidSet(folderName)—once uniqueBaseName includes the sequence number, every XML in CREATE and AMEND will strictly require its exact _front.tif/.tiff and _detailfront.jpg/.jpeg counterparts in the same folder to be considered valid.
+
+
+
+
+int processedCount = 0;
+		while (validSets.size() - processedCount >= targetSets) {
+			List<FileSet> batchSets = validSets.subList(processedCount, processedCount + targetSets);
+			createBatchAndProcess(batchSets, folderName);
+			processedCount += targetSets;
+		}
+
+//      EOD PROCESSING CODE 
+
+		LocalTime currTime = LocalTime.now();
+		LocalTime eodTime = LocalTime.parse(batchProperties.getEodTime(), DateTimeFormatter.ofPattern("HH:mm"));
+
+		if (processedCount < validSets.size() && !currTime.isBefore(eodTime)) {
+			List<FileSet> remainingSets = validSets.subList(processedCount, validSets.size());
+			createBatchAndProcess(remainingSets, folderName);
+			log.info("Processed a partial batch of {} remaining sets.", remainingSets.size());
+		}
