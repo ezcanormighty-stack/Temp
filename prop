@@ -50,3 +50,90 @@ sftp:
   remote-dir: "/remote/npci/inward/"
   local-dir: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/SFTP_Local/"
   archive-dir: "/remote/npci/archive/"
+
+
+# Spring Core Configuration
+spring:
+  application:
+    name: outward-decryption-utility
+  main:
+    web-application-type: none
+
+  datasource:
+    url: jdbc:oracle:thin:@10.177.135.145:1535:DEVDB
+    username: Aadesh
+    password: Aadesh
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      pool-name: OutwardDecHikariPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+
+app:
+  executor:
+    pool-size: 4
+  scheduler:
+    poll-interval: 60000
+
+# 1. File & Directory Properties (binds to FilePathProperties)
+file:
+  paths:
+    source-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/SourceFiles/"
+    decrypted-temp-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/DecryptedFiles/"
+    backup-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Backup/OriginalFile/"
+    output-backup-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Backup/DecryptedFile/"
+    output:
+      mandate-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/OutputFiles/Mandate/"
+      pain12-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/OutputFiles/Pain_12/"
+    failed:
+      decryption-failed-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/Decryption/"
+      sign-not-verified-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/SignVerificationFailed/"
+      data-extraction-failed-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/DataExtractionFailed/"
+      not-a-zip-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/NotAZip/"
+      duplicate-file-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/DuplicateFiles/"
+      unrecognized-type-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/FailedFiles/NameValidationFailed/"
+
+# 2. Cryptographic Properties (binds to CryptoProperties)
+crypto:
+  pgp:
+    public-key-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Certificate/CHETAN_PUB.cer"
+    private-key-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/Certificate/Aadesh.pfx"
+    password: "password"
+    checking-cert-path: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/checking_cert/temp_cert.cer"
+    allow-unencrypted: false # Equivalent to only-encrypted: true
+  aes:
+    key: "tIPr6vE4nRwzVHeIsApDO9N5Lo5lohB5XZTlirh1yvA="
+    iv: "AYEFyTcSaPmewXc+JPsGZA=="
+
+# 3. SFTP Connection Properties (binds to SftpProperties)
+sftp:
+  enabled: true
+  host: "10.191.66.59"
+  port: 22
+  username: "sftpuser"
+  password: ""
+  private-key-path: "/AadeshApp/JAR/MandateDecryption/Keys/sftp_identity.key"
+  remote-dir: "/remote/npci/inward/"
+  local-dir: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/SourceFiles/"
+  archive-dir: "/remote/npci/archive/"
+
+logging:
+  file:
+    name: "D:/OutwardDecrypt/Outward_Decrypt_Metadata/logs/outward-decryption-utility.log"
+  level:
+    root: INFO
+    com.tcs.aadesh: INFO
