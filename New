@@ -215,3 +215,32 @@ private synchronized String getNextSequence(String currDate) {
 
 		log.info("Going to Sleep for 60 seconds");
 	
+
+private void handleIncompleteSet(FileSet set, String folderName) {
+    Path invalidSetDir = Paths.get(directoryProperties.getInvalidSetFailed());
+
+    try {
+        Files.createDirectories(invalidSetDir);
+
+        for (Path file : set.getAvailableFiles()) {
+            String fileName = file.getFileName().toString();
+            log.warn("Incomplete file set detected in {}. Moving {} to InvalidSet folder.", folderName, fileName);
+
+            logFileStatus(fileName, folderName, "INVALID_SET", "VALIDATION"); // Or use your ErrorConstants enum
+            Files.move(file, invalidSetDir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
+        }
+    } catch (IOException e) {
+        log.error("Failed to move incomplete set files to {}", invalidSetDir, e);
+    }
+}
+
+
+private boolean isOlderThanMinutes(FileSet set, long minutes) throws IOException {
+    Instant cutoff = Instant.now().minus(Duration.ofMinutes(minutes));
+    for (Path file : set.getAvailableFiles()) {
+        if (Files.getLastModifiedTime(file).toInstant().isAfter(cutoff)) {
+            return false; // Still recent, wait for the next polling cycle
+        }
+    }
+    return true;
+}
