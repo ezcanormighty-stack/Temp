@@ -171,3 +171,48 @@ public class SignatureUtility {
         return writer.toString();
     }
 }
+
+
+
+
+
+
+
+@PostConstruct
+public void init() {
+    try {
+        Security.addProvider(new BouncyCastleProvider());
+
+        String keystorePath = cryptoProperties.getKeystore().getPrivateKeyPath();
+        String password = cryptoProperties.getKeystore().getPassword();
+        String publicCertPath = cryptoProperties.getKeystore().getPublicCertPath();
+
+        // 1. Load Private Key and Private Cert from PKCS12 Keystore (for signZip)
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        try (FileInputStream fis = new FileInputStream(keystorePath)) {
+            keyStore.load(fis, password.toCharArray());
+        }
+
+        String alias = keyStore.aliases().nextElement();
+        this.privateKey = (PrivateKey) keyStore.getKey(alias, password.toCharArray());
+
+        Certificate cert = keyStore.getCertificate(alias);
+        if (cert instanceof X509Certificate) {
+            this.certificate = (X509Certificate) cert;
+        } else {
+            throw new IllegalStateException("Certificate in keystore is not an X509Certificate");
+        }
+
+        // 2. Load Public Cert separately for the XML <Certificate> tag (matches MandateLauncher)
+        try (FileInputStream pubFis = new FileInputStream(publicCertPath)) {
+            CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+            X509Certificate pubCert = (X509Certificate) certFactory.generateCertificate(pubFis);
+            this.base64Certificate = Base64.getEncoder().encodeToString(pubCert.getEncoded());
+        }
+
+        log.info("Signature Utility initialized successfully with private key, privCert, and pubCert.");
+    } catch (Exception e) {
+        log.error("Failed to initialize Keystore/Certificates for signing", e);
+        throw new RuntimeException("Could not initialize signing keys", e);
+    }
+}
