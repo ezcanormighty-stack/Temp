@@ -1,0 +1,184 @@
+To combine both validators and integrate them into the outward decryption flow, create a unified, thread-safe FilenameValidator, inject it into DecryptionOrchestratorService, and add the name block to application.yml.
+1. Combined util/FilenameValidator.java
+This merges the PAIN12 and Mandate ACK rules using NameProperties. Notice that the errors list is now a local variable inside validateMandate(...) instead of a class field—keeping it thread-safe for ExecutorService.
+package com.tcs.aadesh.util;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.config.properties.NameProperties;
+import com.tcs.aadesh.constant.FileType;
+
+@Component
+public class FilenameValidator {
+
+	private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("ddMMyyyy");
+
+	private final NameProperties props;
+
+	public FilenameValidator(NameProperties props) {
+		this.props = props;
+	}
+
+	public void validate(String fileName, FileType fileType) {
+		if (fileName == null || fileName.isBlank()) {
+			throw new IllegalArgumentException("Filename is null or blank");
+		}
+		if (fileType == null) {
+			throw new IllegalArgumentException("FileType cannot be null for filename validation");
+		}
+
+		switch (fileType) {
+			case PAIN12_RES -> validatePain12(fileName);
+			case CREATE -> validateMandate(fileName, props.getCreateFilenamePrefix());
+			case AMEND -> validateMandate(fileName, props.getAmendFilesnamePrefix());
+			case CANCEL -> validateMandate(fileName, props.getCancelFilesnamePrefix());
+		}
+	}
+
+	// ─── PAIN 12 Validation ──────────────────────────────────────────────────
+	private void validatePain12(String fileName) {
+		String prefix = props.getMmsFilenamePrefix();
+		String suffix = props.getMmsFilenameSuffix();
+
+		if (!fileName.startsWith(prefix)) {
+			throw new IllegalArgumentException("Filename must start with '" + prefix + "' but was: " + fileName);
+		}
+		if (!fileName.endsWith(suffix)) {
+			throw new IllegalArgumentException("Filename must end with '" + suffix + "' but was: " + fileName);
+		}
+
+		String middle = fileName.substring(prefix.length(), fileName.length() - suffix.length());
+		String[] parts = middle.split("-");
+		if (parts.length != 3) {
+			throw new IllegalArgumentException(
+					"Expected 3 segments after prefix but got " + parts.length + ": " + middle);
+		}
+
+		List<String> dateErrors = validateDate(parts[1]);
+		if (!dateErrors.isEmpty()) {
+			throw new IllegalArgumentException(String.join("; ", dateErrors));
+		}
+
+		String seqPart = parts[2];
+		if (seqPart.length() != 6 || !seqPart.matches("\\d{6}")) {
+			throw new IllegalArgumentException("Sequence number must be exactly 6 digits but was: " + seqPart);
+		}
+	}
+
+	// ─── Mandate (CREATE / AMEND / CANCEL) Validation ────────────────────────
+	private void validateMandate(String fileName, String prefix) {
+		List<String> errors = new ArrayList<>();
+		String suffix = props.getMandatePostfix();
+
+		if (!fileName.startsWith(prefix)) {
+			errors.add("FileName: must start with '" + prefix + "'");
+			throwValidationErrors(errors);
+		}
+		if (!fileName.endsWith(suffix)) {
+			errors.add("FileName: must end with '" + suffix + "'");
+			throwValidationErrors(errors);
+		}
+
+		// Strip prefix (e.g., "MMS-AMEND-") and suffix (e.g., "-INP-ACK.zip")
+		// Expected remaining segments: [SBIN, SBINH2HUSER999, 14112026, 000002]
+		String middle = fileName.substring(prefix.length(), fileName.length() - suffix.length());
+		String[] parts = middle.split("-");
+
+		if (parts.length != 4) {
+			errors.add("FileName: expected 4 segments between prefix and suffix, got " + parts.length);
+			throwValidationErrors(errors);
+		}
+
+		if (!"SBIN".equals(parts[0])) {
+			errors.add("FileName segment: expected 'SBIN', got '" + parts[0] + "'");
+		}
+
+		// parts[1]: user ID (open for future validation)
+
+		errors.addAll(validateDate(parts[2]));
+
+		if (parts[3].length() != 6) {
+			errors.add("FileName sequence: must be exactly 6 characters, got "
+					+ parts[3].length() + " ('" + parts[3] + "')");
+		}
+
+		if (!errors.isEmpty()) {
+			throwValidationErrors(errors);
+		}
+	}
+
+	// ─── Shared Date Validation ──────────────────────────────────────────────
+	private List<String> validateDate(String dateStr) {
+		List<String> dateErrors = new ArrayList<>();
+		if (dateStr == null || dateStr.length() != 8) {
+			dateErrors.add("Date must be 8 characters (ddMMyyyy), got '" + dateStr + "'");
+			return dateErrors;
+		}
+
+		LocalDate fileDate;
+		try {
+			fileDate = LocalDate.parse(dateStr, DATE_FMT);
+		} catch (DateTimeParseException e) {
+			dateErrors.add("Invalid date format '" + dateStr + "' (expected ddMMyyyy)");
+			return dateErrors;
+		}
+
+		int maxAgeDays = props.getMmsMaxAgeDays();
+		long ageDays = ChronoUnit.DAYS.between(fileDate, LocalDate.now());
+
+		if (ageDays < 0) {
+			dateErrors.add("Date is in the future: " + dateStr);
+		} else if (ageDays > maxAgeDays) {
+			dateErrors.add("Date '" + dateStr + "' is " + ageDays + " days old (max allowed: " + maxAgeDays + ")");
+		}
+		return dateErrors;
+	}
+
+	private void throwValidationErrors(List<String> errors) {
+		throw new IllegalArgumentException(
+				"FileName validation failed with " + errors.size() + " error(s): " + String.join(" | ", errors));
+	}
+}
+
+(Note: If your createFilenamePrefix / amendFilesnamePrefix / cancelFilesnamePrefix values already include SBIN-, change parts.length != 4 to 3, remove the "SBIN" check, and use parts[1] for date and parts[2] for sequence.)
+2. Changes in service/DecryptionOrchestratorService.java
+Inject FilenameValidator, call it right after resolving FileType, and catch IllegalArgumentException to log ERR01 and move the file to NameValidationFailed/:
+ * Add field & constructor parameter:
+private final FilenameValidator filenameValidator;
+
+(Add FilenameValidator filenameValidator to the @Autowired constructor and assign this.filenameValidator = filenameValidator;.)
+ * Invoke validation in processZipBatch(File sourceFile) immediately after Step 2 (resolveFileType):
+// 2. Route file type & resolve flat output directory (Mandate vs Pain_12)
+FileType fileType = fileRoutingService.resolveFileType(fileName);
+Path targetOutputDir = fileRoutingService.resolveOutputDirectory(fileType);
+decLog.setFileType(fileType.getValue());
+
+// 2.5 Validate filename structure and date window
+filenameValidator.validate(fileName, fileType);
+
+ * Add a catch block before catch (Exception e):
+} catch (IllegalArgumentException e) {
+	ErrorLogger.log(log, "Filename validation failed for: " + fileName, e);
+	handleFailure(sourceFile, decLog, ProcessingStatus.FAILED_FILE,
+			ProcessingStatus.ERR01.getCode(),
+			filePathProperties.getFailed().getUnrecognizedTypePath());
+
+3. Add name Properties to application.yml
+Because NameProperties uses @ConfigurationProperties(prefix = "name", ignoreUnknownFields = false), add this section to application.yml with your exact prefixes/suffixes:
+name:
+  mms-max-age-days: 5
+  mms-filename-prefix: "MMS-RES-"
+  mms-filename-suffix: ".zip"
+  create-filename-prefix: "MMS-CREATE-"
+  amend-filesname-prefix: "MMS-AMEND-"
+  cancel-filesname-prefix: "MMS-CANCEL-"
+  mandate-postfix: "-INP-ACK.zip"
+
+(Keep amend-filesname-prefix and cancel-filesname-prefix spelled with filesname so they bind to amendFilesnamePrefix and cancelFilesnamePrefix in NameProperties.)
