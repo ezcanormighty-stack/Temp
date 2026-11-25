@@ -1,0 +1,298 @@
+package com.tcs.aadesh.config.properties;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.Min;
+
+@Component
+@Validated
+@ConfigurationProperties(prefix = "name", ignoreUnknownFields = false)
+public class NameProperties {
+
+	private int mmsMaxAgeDays;
+	private String mmsFilenamePrefix;
+	private String mmsFilenameSuffix;
+	private String createFilenamePrefix;
+	private String amendFilesnamePrefix;
+	private String cancelFilesnamePrefix;
+	private String mandatePostfix;
+
+	public int getMmsMaxAgeDays() {
+		return mmsMaxAgeDays;
+	}
+
+	public void setMmsMaxAgeDays(int mmsMaxAgeDays) {
+		this.mmsMaxAgeDays = mmsMaxAgeDays;
+	}
+
+	public String getMmsFilenamePrefix() {
+		return mmsFilenamePrefix;
+	}
+
+	public void setMmsFilenamePrefix(String mmsFilenamePrefix) {
+		this.mmsFilenamePrefix = mmsFilenamePrefix;
+	}
+
+	public String getMmsFilenameSuffix() {
+		return mmsFilenameSuffix;
+	}
+
+	public void setMmsFilenameSuffix(String mmsFilenameSuffix) {
+		this.mmsFilenameSuffix = mmsFilenameSuffix;
+	}
+
+	public String getCreateFilenamePrefix() {
+		return createFilenamePrefix;
+	}
+
+	public void setCreateFilenamePrefix(String createFilenamePrefix) {
+		this.createFilenamePrefix = createFilenamePrefix;
+	}
+
+	public String getAmendFilesnamePrefix() {
+		return amendFilesnamePrefix;
+	}
+
+	public void setAmendFilesnamePrefix(String amendFilesnamePrefix) {
+		this.amendFilesnamePrefix = amendFilesnamePrefix;
+	}
+
+	public String getCancelFilesnamePrefix() {
+		return cancelFilesnamePrefix;
+	}
+
+	public void setCancelFilesnamePrefix(String cancelFilesnamePrefix) {
+		this.cancelFilesnamePrefix = cancelFilesnamePrefix;
+	}
+
+	public String getMandatePostfix() {
+		return mandatePostfix;
+	}
+
+	public void setMandatePostfix(String mandatePostfix) {
+		this.mandatePostfix = mandatePostfix;
+	}
+
+}
+
+
+
+
+#VALIDATOR FOR PAIN 12 
+
+package com.tcs.aadesh.util;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
+
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.config.properties.NameProperties;
+
+@Component
+public class FilenameValidator {
+
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("ddMMyyyy");
+
+    private final NameProperties props;
+
+    public FilenameValidator(NameProperties props) {
+        this.props = props;
+    }
+
+    public void validate(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            throw new IllegalArgumentException("Filename is null or blank");
+        }
+
+        String prefix = props.getMmsFilenamePrefix();
+        String suffix = props.getMmsFilenameSuffix();
+        int maxAgeDays = props.getMmsMaxAgeDays();
+
+        if (!fileName.startsWith(prefix)) {
+            throw new IllegalArgumentException(
+                "Filename must start with '" + prefix + "' but was: " + fileName);
+        }
+        if (!fileName.endsWith(suffix)) {
+            throw new IllegalArgumentException(
+                "Filename must end with '" + suffix + "' but was: " + fileName);
+        }
+
+        String middle = fileName.substring(prefix.length(), fileName.length() - suffix.length());
+        String[] parts = middle.split("-");
+        if (parts.length != 3) {
+            throw new IllegalArgumentException(
+                "Expected 3 segments after prefix but got " + parts.length + ": " + middle);
+        }
+
+        validateDate(parts[1], maxAgeDays);
+
+        String seqPart = parts[2];
+        if (seqPart.length() != 6 || !seqPart.matches("\\d{6}")) {
+            throw new IllegalArgumentException(
+                "Sequence number must be exactly 6 digits but was: " + seqPart);
+        }
+    }
+
+    private void validateDate(String datePart, int maxAgeDays) {
+        if (datePart.length() != 8) {
+            throw new IllegalArgumentException(
+                "Date must be 8 characters (ddmmyyyy) but was: " + datePart);
+        }
+        LocalDate fileDate;
+        try {
+            fileDate = LocalDate.parse(datePart, DATE_FMT);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(
+                "Invalid date format '" + datePart + "' (expected ddmmyyyy)");
+        }
+        long ageDays = ChronoUnit.DAYS.between(fileDate, LocalDate.now());
+        if (ageDays < 0) {
+            throw new IllegalArgumentException("Date is in the future: " + datePart);
+        }
+        if (ageDays > maxAgeDays) {
+            throw new IllegalArgumentException(
+                "Date is too old (" + ageDays + " days). Max allowed: " + maxAgeDays);
+        }
+    }
+}   
+
+
+
+
+#VALIDATOR FOR MANDATE(create amend cancel ack files)
+
+
+package com.tcs.aadesh.util;
+
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+import org.springframework.stereotype.Component;
+
+import com.tcs.aadesh.config.properties.AppProperties;
+
+@Component
+public class FilenameValidator {
+
+    private static final Set<String> ALLOWED_ACTIONS = Set.of("AMEND", "CREATE", "CANCEL");
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("ddMMyyyy");
+
+    private final AppProperties appProperties;
+    private final List<String> errors = new ArrayList<>();
+
+    public FilenameValidator(AppProperties appProperties) {
+        this.appProperties = appProperties;
+    }
+
+    public List<String> validate(String fileName) {
+        errors.clear();
+
+        if (fileName == null || fileName.trim().isEmpty()) {
+            errors.add("FileName: is null or empty");
+            return errors;
+        }
+
+        String prefix = appProperties.getMmsFilenamePrefix();       // "MMS-"
+        String suffix = appProperties.getMmsFilenameSuffix();       // "-INP-ACK.xml"
+
+        // Check prefix
+        if (!fileName.startsWith(prefix)) {
+            errors.add("FileName: must start with '" + prefix + "'");
+            return errors;
+        }
+
+        // Check suffix
+        if (!fileName.endsWith(suffix)) {
+            errors.add("FileName: must end with '" + suffix + "'");
+            return errors;
+        }
+
+        // Strip prefix and suffix to get the middle part
+        String middle = fileName.substring(prefix.length(), fileName.length() - suffix.length());
+        String[] parts = middle.split("-");
+
+        // Expected: [AMEND, SBIN, SBINH2HUSER999, 14112026, 000002]
+        if (parts.length != 5) {
+            errors.add("FileName: expected 5 segments between prefix and suffix, got " + parts.length);
+            return errors;
+        }
+
+        // Segment 1 (index 0): AMEND / CREATE / CANCEL
+        if (!ALLOWED_ACTIONS.contains(parts[0])) {
+            errors.add("FileName segment 2: '" + parts[0] + "' not allowed. Must be one of " + ALLOWED_ACTIONS);
+        }
+
+        // Segment 2 (index 1): SBIN
+        if (!"SBIN".equals(parts[1])) {
+            errors.add("FileName segment 3: expected 'SBIN', got '" + parts[1] + "'");
+        }
+
+        // Segment 3 (index 2): open for future validation
+        // TODO: add validation for 4th segment (user ID)
+
+        // Segment 4 (index 3): date validation (ddMMyyyy)
+        validateDate(parts[3]);
+
+        // Segment 5 (index 4): exactly 6 characters
+        if (parts[4].length() != 6) {
+            errors.add("FileName segment 6: must be exactly 6 characters, got " + parts[4].length() + " ('" + parts[4] + "')");
+        }
+
+        return errors;
+    }
+
+    public void validateOrThrow(String fileName) {
+        List<String> errors = validate(fileName);
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException(
+                "FileName validation failed with " + errors.size() + " error(s):\n"
+                + String.join("\n", errors)
+            );
+        }
+    }
+
+    // ─── Date validation ─────────────────────────────────────────────────────
+    private void validateDate(String dateStr) {
+        if (dateStr == null || dateStr.length() != 8) {
+            errors.add("FileName date segment: must be 8 characters (ddMMyyyy), got '" + dateStr + "'");
+            return;
+        }
+
+        LocalDate fileDate;
+        try {
+            fileDate = LocalDate.parse(dateStr, DATE_FMT);
+        } catch (Exception e) {
+            errors.add("FileName date segment: '" + dateStr + "' is not a valid date in ddMMyyyy format");
+            return;
+        }
+
+        int maxAgeDays = appProperties.getMmsMaxAgeDays(); // e.g. 2 or 0
+
+        LocalDate today = LocalDate.now();
+        long diff = ChronoUnit.DAYS.between(fileDate, today);
+
+        if (diff > maxAgeDays) {
+            errors.add("FileName date segment: date '" + dateStr + "' is " + diff
+                       + " days old (max allowed: " + maxAgeDays + ")");
+        }
+        if (diff < 0) {
+            errors.add("FileName date segment: date '" + dateStr + "' is in the future");
+        }
+    }
+}   
+
+
+
+
+
+this is the code for filaneme validator of both pain 12 and mandate ack combine both the validators i have already added the names required in nameProperties which code i have given at the beginning. Show me what to change in outward decryption in order to apply filename validation. 
